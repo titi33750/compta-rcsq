@@ -134,7 +134,7 @@ table{width:100%;border-collapse:collapse;font-size:14px}th,td{text-align:left;p
  <div id="editEntryStatus" class="notice hidden"></div><div id="entryHistory" style="margin-top:18px"></div>
 </div>
 </section>
-</main>
+<section id="view-users" class="view"><div class="panel"><h2>👥 Utilisateurs & rôles</h2><p class="muted">Gestion des droits d’accès à Compta RCSQ. Les comptes sont créés via l’inscription sécurisée, puis l’administrateur attribue leur rôle ici.</p><div id="usersList"></div><div class="notice">🔐 <b>Administrateur</b> : gestion complète · <b>Trésorier</b> : comptabilité et consultation · <b>Saisie</b> : saisie des écritures · <b>Lecture seule</b> : consultation.</div></div></section></main>
 
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script>
@@ -170,6 +170,8 @@ async function boot(){
   sb.from("budget_categories").select("*").eq("active",true).order("name")
  ]);
  profile=p.data||{display_name:user.email.split("@")[0],role:"lecture"};fy=y.data;accounts=a.data||[];cats=c.data||[];knownProfiles=profile?.id?[profile]:[{id:user.id,display_name:profile.display_name||user.email.split("@")[0],role:profile.role}];
+if(profile.role==="admin") $("usersTab").style.display="";
+if(["admin","tresorier"].includes(profile.role)){let pr=await sb.from("profiles").select("id,display_name,role,created_at").order("created_at");if(!pr.error)knownProfiles=pr.data||knownProfiles;}
  $("welcome").textContent="Bienvenue "+(profile.display_name||user.email);$("roleBadge").textContent="Rôle : "+profile.role;$("headerUser").textContent=user.email;
  if(fy){$("exerciseHead").textContent="Exercice "+fy.label;$("period").textContent=`Du ${frDate(fy.start_date)} au ${frDate(fy.end_date)}`}
  fillAccounts();await loadEntries();renderAll();
@@ -196,7 +198,7 @@ function renderAll(){
  document.querySelectorAll(".receiptView").forEach(b=>b.addEventListener("click",()=>viewReceipt(b.dataset.id)));
  document.querySelectorAll(".receiptAdd").forEach(b=>b.addEventListener("click",()=>openReceiptUpload(b.dataset.entry)));
  document.querySelectorAll(".entryEditBtn").forEach(b=>b.addEventListener("click",()=>openEntryEdit(b.dataset.entry)));
- renderBudget();
+ renderBudget();renderUsers();
 }
 function renderBudget(){
  let valid=entries.filter(e=>e.status==="validee");
@@ -252,7 +254,7 @@ async function saveBudgetEdit(){
  $("budgetEditSave").disabled=false;
  if(error){$("budgetEditStatus").textContent="Erreur : "+error.message;$("budgetEditStatus").className="notice err";return}
  let c=cats.find(x=>x.id===id);if(c)c.planned_amount=amount;
- $("budgetEditStatus").textContent="Budget prévisionnel enregistré ✅";$("budgetEditStatus").className="notice ok";renderBudget();
+ $("budgetEditStatus").textContent="Budget prévisionnel enregistré ✅";$("budgetEditStatus").className="notice ok";renderBudget();renderUsers();
 }
 function openEntry(type){entryType=type;fillCategories();$("entryTitle").textContent=type==="recette"?"Nouvelle recette":"Nouvelle dépense";$("entryDate").value=new Date().toISOString().slice(0,10);$("entryCard").classList.remove("hidden");$("entryCard").scrollIntoView({behavior:"smooth"})}
 async function saveEntry(status){
@@ -291,6 +293,24 @@ async function saveEntryEdit(){
  let {error}=await sb.from("entries").update(payload).eq("id",id);$("editEntrySave").disabled=false;
  if(error){$("editEntryStatus").textContent="Erreur : "+error.message;$("editEntryStatus").className="notice err";return}
  $("editEntryStatus").textContent="Modification enregistrée et historisée ✅";$("editEntryStatus").className="notice ok";await loadEntries();renderAll();await loadEntryHistory(id);
+}
+function roleLabel(r){return {admin:"Administrateur",tresorier:"Trésorier",saisie:"Saisie",lecture:"Lecture seule"}[r]||r}
+function renderUsers(){
+ let el=$("usersList"); if(!el)return;
+ if(profile?.role!=="admin"){el.innerHTML="<p>Accès réservé à l’administrateur.</p>";return}
+ el.innerHTML=(knownProfiles||[]).map(p=>`<div style="padding:14px 0;border-top:1px solid #e5eaf2;display:grid;gap:8px">
+ <div><strong>👤 ${esc(p.display_name||"Utilisateur")}</strong>${p.id===user.id?' <span class="badge">Votre compte</span>':""}</div>
+ <label>Rôle<select onchange="changeUserRole('${p.id}',this.value)" ${p.id===user.id?'data-self="1"':""}>
+ ${["admin","tresorier","saisie","lecture"].map(r=>`<option value="${r}" ${p.role===r?"selected":""}>${roleLabel(r)}</option>`).join("")}
+ </select></label></div>`).join("")||"<p>Aucun utilisateur.</p>";
+}
+async function changeUserRole(id,role){
+ if(profile.role!=="admin")return;
+ if(id===user.id && role!=="admin"){alert("Sécurité : votre propre compte administrateur ne peut pas être rétrogradé depuis cette page.");renderUsers();return}
+ let {error}=await sb.from("profiles").update({role}).eq("id",id);
+ if(error){alert("Modification refusée : "+error.message);renderUsers();return}
+ let p=knownProfiles.find(x=>x.id===id);if(p)p.role=role;
+ renderUsers();alert("Rôle mis à jour : "+roleLabel(role));
 }
 async function loadEntryHistory(entryId){
  if(!["admin","tresorier"].includes(profile.role)){$("entryHistory").innerHTML="<small>Historique détaillé visible par l’administrateur et le trésorier.</small>";return}
