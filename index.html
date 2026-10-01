@@ -141,7 +141,7 @@ table{width:100%;border-collapse:collapse;font-size:14px}th,td{text-align:left;p
 (function(){
 const URL="https://wrrwanpgvqozesdcqozl.supabase.co", KEY="sb_publishable_616PWlfFWgNPkfnhwnsRDw_qmzbvo-Q";
 const $=id=>document.getElementById(id), euro=n=>new Intl.NumberFormat("fr-FR",{style:"currency",currency:"EUR"}).format(Number(n||0));
-let sb=null,user=null,profile=null,fy=null,accounts=[],cats=[],entries=[],attachments=[],entryType="depense";
+let sb=null,user=null,profile=null,fy=null,accounts=[],cats=[],entries=[],attachments=[],knownProfiles=[],entryType="depense";
 function authMsg(m,k){$("authStatus").textContent=m;$("authStatus").className=k||""}
 if(!window.supabase?.createClient){authMsg("ERREUR : Supabase ne s'est pas chargé.","err");return}
 sb=window.supabase.createClient(URL,KEY);authMsg("Supabase chargé ✅","ok");
@@ -169,7 +169,7 @@ async function boot(){
   sb.from("accounts").select("*").eq("active",true).order("name"),
   sb.from("budget_categories").select("*").eq("active",true).order("name")
  ]);
- profile=p.data||{display_name:user.email.split("@")[0],role:"lecture"};fy=y.data;accounts=a.data||[];cats=c.data||[];
+ profile=p.data||{display_name:user.email.split("@")[0],role:"lecture"};fy=y.data;accounts=a.data||[];cats=c.data||[];knownProfiles=profile?.id?[profile]:[{id:user.id,display_name:profile.display_name||user.email.split("@")[0],role:profile.role}];
  $("welcome").textContent="Bienvenue "+(profile.display_name||user.email);$("roleBadge").textContent="Rôle : "+profile.role;$("headerUser").textContent=user.email;
  if(fy){$("exerciseHead").textContent="Exercice "+fy.label;$("period").textContent=`Du ${frDate(fy.start_date)} au ${frDate(fy.end_date)}`}
  fillAccounts();await loadEntries();renderAll();
@@ -294,9 +294,36 @@ async function saveEntryEdit(){
 }
 async function loadEntryHistory(entryId){
  if(!["admin","tresorier"].includes(profile.role)){$("entryHistory").innerHTML="<small>Historique détaillé visible par l’administrateur et le trésorier.</small>";return}
- let {data,error}=await sb.from("audit_log").select("*").eq("table_name","entries").eq("record_id",entryId).order("changed_at",{ascending:false}).limit(20);
+ let {data,error}=await sb.from("audit_log").select("*").eq("table_name","entries").eq("record_id",entryId).order("changed_at",{ascending:true}).limit(50);
  if(error){$("entryHistory").innerHTML="<small>Historique indisponible.</small>";return}
- $("entryHistory").innerHTML=`<h3>🕘 Historique</h3>`+(data?.length?data.map(a=>`<div style="padding:10px 0;border-top:1px solid #e5eaf2"><strong>${esc(a.action)}</strong> · ${new Date(a.changed_at).toLocaleString("fr-FR")}<br><small>Utilisateur : ${esc(a.user_id||"système")}</small></div>`).join(""):"<small>Aucune modification enregistrée.</small>");
+ const labels={label:"Libellé",amount:"Montant",entry_date:"Date",third_party:"Tiers",category_id:"Catégorie",account_id:"Compte",payment_method:"Moyen de paiement",notes:"Notes",status:"Statut"};
+ const fmt=(k,v)=>{
+   if(v===null||v===undefined||v==="")return "vide";
+   if(k==="amount")return euro(v);
+   if(k==="entry_date")return frDate(v);
+   if(k==="category_id")return catName(v);
+   if(k==="account_id")return accName(v);
+   return String(v);
+ };
+ let rows=[];
+ for(let i=0;i<(data||[]).length;i++){
+   let a=data[i], prev=i>0?data[i-1].details:null, who=knownProfiles.find(p=>p.id===a.user_id)?.display_name||(a.user_id===user.id?(profile.display_name||user.email):"Utilisateur");
+   let changes=[];
+   if(a.action==="INSERT") changes.push("Création de l’écriture");
+   else if(a.action==="UPDATE"&&prev){
+     Object.keys(labels).forEach(k=>{
+       let before=prev?.[k]??null,after=a.details?.[k]??null;
+       if(JSON.stringify(before)!==JSON.stringify(after))changes.push(`<b>${labels[k]}</b> : ${esc(fmt(k,before))} → ${esc(fmt(k,after))}`);
+     });
+     if(!changes.length)changes.push("Mise à jour technique");
+   } else if(a.action==="DELETE") changes.push("Suppression enregistrée");
+   rows.push(`<div style="padding:12px 0;border-top:1px solid #e5eaf2">
+     <div style="display:flex;justify-content:space-between;gap:10px"><strong>${a.action==="INSERT"?"Création":a.action==="UPDATE"?"Modification":a.action}</strong><small>${new Date(a.changed_at).toLocaleString("fr-FR")}</small></div>
+     <small>👤 ${esc(who)}</small>
+     <div style="margin-top:7px;line-height:1.55">${changes.join("<br>")}</div>
+   </div>`);
+ }
+ $("entryHistory").innerHTML=`<h3>🕘 Historique lisible</h3>`+(rows.length?rows.reverse().join(""):"<small>Aucun événement enregistré.</small>");
 }
 async function viewReceipt(id){
  let a=attachments.find(x=>x.id===id);if(!a)return;
