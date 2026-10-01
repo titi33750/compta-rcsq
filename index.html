@@ -134,14 +134,6 @@ table{width:100%;border-collapse:collapse;font-size:14px}th,td{text-align:left;p
  <div id="editEntryStatus" class="notice hidden"></div><div id="entryHistory" style="margin-top:18px"></div>
 </div>
 </section>
-<section id="view-users" class="view" style="display:none">
-<div class="panel">
-<h2>👥 Utilisateurs & rôles</h2>
-<p class="muted">Les nouveaux comptes sont créés en Lecture seule. L’administrateur peut ensuite attribuer le rôle adapté.</p>
-<div id="usersList"><p class="muted">Chargement des utilisateurs…</p></div>
-<div class="notice">🔐 <b>Administrateur</b> : gestion complète · <b>Trésorier</b> : comptabilité et consultation · <b>Saisie</b> : saisie des écritures · <b>Lecture seule</b> : consultation.</div>
-</div>
-</section>
 </main>
 
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
@@ -177,7 +169,7 @@ async function boot(){
   sb.from("accounts").select("*").eq("active",true).order("name"),
   sb.from("budget_categories").select("*").eq("active",true).order("name")
  ]);
- profile=p.data||{display_name:user.email.split("@")[0],role:"lecture"};fy=y.data;accounts=a.data||[];cats=c.data||[];if(profile.role==="admin")$("usersTab").style.display="";knownProfiles=profile?.id?[profile]:[{id:user.id,display_name:profile.display_name||user.email.split("@")[0],role:profile.role}];
+ profile=p.data||{display_name:user.email.split("@")[0],role:"lecture"};fy=y.data;accounts=a.data||[];cats=c.data||[];knownProfiles=profile?.id?[profile]:[{id:user.id,display_name:profile.display_name||user.email.split("@")[0],role:profile.role}];
  $("welcome").textContent="Bienvenue "+(profile.display_name||user.email);$("roleBadge").textContent="Rôle : "+profile.role;$("headerUser").textContent=user.email;
  if(fy){$("exerciseHead").textContent="Exercice "+fy.label;$("period").textContent=`Du ${frDate(fy.start_date)} au ${frDate(fy.end_date)}`}
  fillAccounts();await loadEntries();renderAll();
@@ -300,26 +292,6 @@ async function saveEntryEdit(){
  if(error){$("editEntryStatus").textContent="Erreur : "+error.message;$("editEntryStatus").className="notice err";return}
  $("editEntryStatus").textContent="Modification enregistrée et historisée ✅";$("editEntryStatus").className="notice ok";await loadEntries();renderAll();await loadEntryHistory(id);
 }
-function roleLabel(r){return {admin:"Administrateur",tresorier:"Trésorier",saisie:"Saisie",lecture:"Lecture seule"}[r]||r}
-async function loadUsers(){
- const el=$("usersList"); if(!el)return;
- if(profile?.role!=="admin"){el.innerHTML="<p>Accès réservé à l’administrateur.</p>";return}
- el.innerHTML="<p class='muted'>Chargement des utilisateurs…</p>";
- const {data,error}=await sb.from("profiles").select("id,display_name,role,created_at").order("created_at");
- if(error){el.innerHTML="<p>Impossible de charger les utilisateurs : "+esc(error.message)+"</p>";return}
- el.innerHTML=(data||[]).map(p=>`<div style="padding:14px 0;border-top:1px solid #e5eaf2;display:grid;gap:8px">
- <div><strong>👤 ${esc(p.display_name||"Utilisateur")}</strong>${p.id===user.id?' <span class="badge">Votre compte</span>':""}</div>
- <label>Rôle<select onchange="changeUserRole('${p.id}',this.value,'${p.role}')">
- ${["admin","tresorier","saisie","lecture"].map(r=>`<option value="${r}" ${p.role===r?"selected":""}>${roleLabel(r)}</option>`).join("")}
- </select></label></div>`).join("")||"<p>Aucun utilisateur.</p>";
-}
-async function changeUserRole(id,role,oldRole){
- if(profile?.role!=="admin")return;
- if(id===user.id && role!=="admin"){alert("Sécurité : votre propre compte administrateur ne peut pas être rétrogradé ici.");await loadUsers();return}
- const {error}=await sb.from("profiles").update({role}).eq("id",id);
- if(error){alert("Modification refusée : "+error.message);await loadUsers();return}
- alert("Rôle mis à jour : "+roleLabel(role)); await loadUsers();
-}
 async function loadEntryHistory(entryId){
  if(!["admin","tresorier"].includes(profile.role)){$("entryHistory").innerHTML="<small>Historique détaillé visible par l’administrateur et le trésorier.</small>";return}
  let {data,error}=await sb.from("audit_log").select("*").eq("table_name","entries").eq("record_id",entryId).order("changed_at",{ascending:true}).limit(50);
@@ -386,6 +358,5 @@ $("draftBtn").addEventListener("click",()=>saveEntry("brouillon"));$("validateBt
 sb.auth.onAuthStateChange((event,session)=>{if(event==="SIGNED_IN"&&session&&!user){user=session.user;setTimeout(boot,0)}});
 boot();
 })();
-$("usersTab")?.addEventListener("click",()=>setTimeout(loadUsers,0));
 </script>
 </body></html>
