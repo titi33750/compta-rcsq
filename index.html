@@ -134,7 +134,15 @@ table{width:100%;border-collapse:collapse;font-size:14px}th,td{text-align:left;p
  <div id="editEntryStatus" class="notice hidden"></div><div id="entryHistory" style="margin-top:18px"></div>
 </div>
 </section>
-<section id="view-users" class="view"><div class="panel"><h2>👥 Utilisateurs & rôles</h2><p class="muted">Gestion des droits d’accès à Compta RCSQ. Les comptes sont créés via l’inscription sécurisée, puis l’administrateur attribue leur rôle ici.</p><div id="usersList"></div><div class="notice">🔐 <b>Administrateur</b> : gestion complète · <b>Trésorier</b> : comptabilité et consultation · <b>Saisie</b> : saisie des écritures · <b>Lecture seule</b> : consultation.</div></div></section></main>
+<section id="view-users" class="view" style="display:none">
+<div class="panel">
+<h2>👥 Utilisateurs & rôles</h2>
+<p class="muted">Gestion des droits d’accès à Compta RCSQ. Les comptes sont créés via l’inscription sécurisée, puis l’administrateur attribue leur rôle ici.</p>
+<div id="usersList"></div>
+<div class="notice">🔐 <b>Administrateur</b> : gestion complète · <b>Trésorier</b> : comptabilité et consultation · <b>Saisie</b> : saisie des écritures · <b>Lecture seule</b> : consultation.</div>
+</div>
+</section>
+</main>
 
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script>
@@ -378,5 +386,7 @@ $("draftBtn").addEventListener("click",()=>saveEntry("brouillon"));$("validateBt
 sb.auth.onAuthStateChange((event,session)=>{if(event==="SIGNED_IN"&&session&&!user){user=session.user;setTimeout(boot,0)}});
 boot();
 })();
+
+$("usersTab")?.addEventListener("click",()=>{renderUsers();});
 </script>
 </body></html>
