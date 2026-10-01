@@ -113,6 +113,13 @@ table{width:100%;border-collapse:collapse;font-size:14px}th,td{text-align:left;p
 <div class="row"><button id="draftBtn" class="btn light">Enregistrer brouillon</button><button id="validateBtn" class="btn primary">Valider l'opération</button></div>
 <div id="entryStatus" class="notice hidden"></div>
 </div>
+<div id="receiptCard" class="card hidden">
+<div class="sectionTitle"><h2>📎 Ajouter un justificatif</h2><button id="receiptClose" class="btn light">Fermer</button></div>
+<p id="receiptEntryLabel"></p>
+<label>PDF ou photo</label><input id="receiptFile" type="file" accept=".pdf,image/jpeg,image/png,image/heic,image/heif">
+<button id="receiptSave" class="btn primary" style="margin-top:14px;width:100%">Envoyer le justificatif</button>
+<div id="receiptStatus" class="notice hidden"></div>
+</div>
 </section>
 </main>
 
@@ -121,7 +128,7 @@ table{width:100%;border-collapse:collapse;font-size:14px}th,td{text-align:left;p
 (function(){
 const URL="https://wrrwanpgvqozesdcqozl.supabase.co", KEY="sb_publishable_616PWlfFWgNPkfnhwnsRDw_qmzbvo-Q";
 const $=id=>document.getElementById(id), euro=n=>new Intl.NumberFormat("fr-FR",{style:"currency",currency:"EUR"}).format(Number(n||0));
-let sb=null,user=null,profile=null,fy=null,accounts=[],cats=[],entries=[],entryType="depense";
+let sb=null,user=null,profile=null,fy=null,accounts=[],cats=[],entries=[],attachments=[],entryType="depense";
 function authMsg(m,k){$("authStatus").textContent=m;$("authStatus").className=k||""}
 if(!window.supabase?.createClient){authMsg("ERREUR : Supabase ne s'est pas chargé.","err");return}
 sb=window.supabase.createClient(URL,KEY);authMsg("Supabase chargé ✅","ok");
@@ -155,7 +162,7 @@ async function boot(){
  fillAccounts();await loadEntries();renderAll();
 }
 function frDate(d){return d?new Date(d+"T12:00:00").toLocaleDateString("fr-FR"):""}
-async function loadEntries(){if(!fy)return;const {data,error}=await sb.from("entries").select("*").eq("fiscal_year_id",fy.id).order("entry_date",{ascending:false}).order("created_at",{ascending:false});if(error)console.error(error);entries=data||[]}
+async function loadEntries(){if(!fy)return;const {data,error}=await sb.from("entries").select("*").eq("fiscal_year_id",fy.id).order("entry_date",{ascending:false}).order("created_at",{ascending:false});if(error)console.error(error);entries=data||[];if(entries.length){const ar=await sb.from("attachments").select("*").in("entry_id",entries.map(e=>e.id)).order("created_at",{ascending:false});attachments=ar.data||[]}else attachments=[]}
 function catName(id){let c=cats.find(x=>x.id===id);if(!c)return "—";let p=c.parent_id&&cats.find(x=>x.id===c.parent_id);return p?p.name+" › "+c.name:c.name}
 function accName(id){return accounts.find(x=>x.id===id)?.name||"—"}
 function fillAccounts(){$("entryAccount").innerHTML=accounts.map(a=>`<option value="${a.id}">${esc(a.name)}</option>`).join("")}
@@ -165,16 +172,15 @@ function renderAll(){
  $("income").textContent=euro(inc);$("expense").textContent=euro(exp);$("balance").textContent=euro(inc-exp);$("count").textContent=entries.length;
  $("recent").innerHTML=entries.length?entries.slice(0,6).map(e=>`<div style="padding:11px 0;border-bottom:1px solid #e6ebf3"><strong>${esc(e.label)}</strong><br><small>${frDate(e.entry_date)} · ${esc(e.piece_number)} · ${e.status}</small><span style="float:right;font-weight:800" class="${e.type==="recette"?"green":"red"}">${e.type==="recette"?"+":"−"} ${euro(e.amount)}</span></div>`).join(""):"Aucune opération pour le moment.";
  $("ledgerBody").innerHTML=entries.map(e=>`<tr><td>${esc(e.piece_number)}</td><td>${frDate(e.entry_date)}</td><td>${e.type}</td><td>${esc(e.label)}</td><td>${esc(e.third_party||"")}</td><td>${esc(catName(e.category_id))}</td><td>${esc(accName(e.account_id))}</td><td>${euro(e.amount)}</td><td>${e.status}</td></tr>`).join("");
- $("ledgerMobile").innerHTML=entries.length?entries.map(e=>`<article class="ledgerCard">
-   <div class="ledgerCardTop">
-     <div><strong>${esc(e.label)}</strong><br><small>${frDate(e.entry_date)} · ${esc(e.piece_number)}</small></div>
-     <div class="ledgerCardAmount ${e.type==="recette"?"green":"red"}">${e.type==="recette"?"+":"−"} ${euro(e.amount)}</div>
-   </div>
-   <div class="ledgerMeta"><strong>${e.type==="recette"?"Recette":"Dépense"}</strong> · ${esc(e.status)}
-   <br>Catégorie : ${esc(catName(e.category_id))}
-   <br>Compte : ${esc(accName(e.account_id))}
-   ${e.third_party?`<br>Tiers : ${esc(e.third_party)}`:""}</div>
- </article>`).join(""):"Aucune opération.";
+ $("ledgerMobile").innerHTML=entries.length?entries.map(e=>{
+ let att=attachments.find(a=>a.entry_id===e.id);
+ return `<article class="ledgerCard">
+   <div class="ledgerCardTop"><div><strong>${esc(e.label)}</strong><br><small>${frDate(e.entry_date)} · ${esc(e.piece_number)}</small></div><div class="ledgerCardAmount ${e.type==="recette"?"green":"red"}">${e.type==="recette"?"+":"−"} ${euro(e.amount)}</div></div>
+   <div class="ledgerMeta"><strong>${e.type==="recette"?"Recette":"Dépense"}</strong> · ${esc(e.status)}<br>Catégorie : ${esc(catName(e.category_id))}<br>Compte : ${esc(accName(e.account_id))}${e.third_party?`<br>Tiers : ${esc(e.third_party)}`:""}</div>
+   <div style="margin-top:12px">${att?`<button class="btn light receiptView" data-id="${att.id}">📎 Voir le justificatif</button> <small>${esc(att.original_name)}</small>`:`<div style="color:#a15c00;font-weight:750;margin-bottom:8px">⚠️ Justificatif manquant</div><button class="btn light receiptAdd" data-entry="${e.id}">📎 Ajouter un justificatif</button>`}</div>
+ </article>`}).join(""):"Aucune opération.";
+ document.querySelectorAll(".receiptView").forEach(b=>b.addEventListener("click",()=>viewReceipt(b.dataset.id)));
+ document.querySelectorAll(".receiptAdd").forEach(b=>b.addEventListener("click",()=>openReceiptUpload(b.dataset.entry)));
  renderBudget();
 }
 function renderBudget(){
@@ -250,12 +256,37 @@ async function saveEntry(status){
 }
 function entryMsg(m,k){$("entryStatus").textContent=m;$("entryStatus").className="notice "+(k||"");$("entryStatus").classList.remove("hidden")}
 function showTab(id){document.querySelectorAll(".tab").forEach(x=>x.classList.add("hidden"));$(id).classList.remove("hidden");document.querySelectorAll("nav button").forEach(x=>x.classList.toggle("active",x.dataset.tab===id))}
+
+async function viewReceipt(id){
+ let a=attachments.find(x=>x.id===id);if(!a)return;
+ let {data,error}=await sb.storage.from("justificatifs").createSignedUrl(a.storage_path,300);
+ if(error){alert("Impossible d’ouvrir le justificatif : "+error.message);return}
+ window.open(data.signedUrl,"_blank");
+}
+function openReceiptUpload(entryId){
+ if(!["admin","tresorier","saisie"].includes(profile.role)){alert("Ton rôle est en lecture seule.");return}
+ let e=entries.find(x=>x.id===entryId);if(!e)return;
+ $("receiptCard").dataset.entry=entryId;$("receiptEntryLabel").textContent=(e.piece_number||"")+" · "+e.label;
+ $("receiptFile").value="";$("receiptStatus").classList.add("hidden");$("receiptCard").classList.remove("hidden");$("receiptCard").scrollIntoView({behavior:"smooth"});
+}
+async function saveReceipt(){
+ let entryId=$("receiptCard").dataset.entry,file=$("receiptFile").files[0],e=entries.find(x=>x.id===entryId);
+ if(!entryId||!file||!e)return;
+ $("receiptSave").disabled=true;$("receiptStatus").textContent="Envoi en cours…";$("receiptStatus").className="notice";
+ let safe=file.name.replace(/[^a-zA-Z0-9._-]/g,"_"),path=`${fy.label}/${entryId}/${Date.now()}-${safe}`;
+ let up=await sb.storage.from("justificatifs").upload(path,file);
+ if(up.error){$("receiptSave").disabled=false;$("receiptStatus").textContent="Erreur : "+up.error.message;$("receiptStatus").className="notice err";return}
+ let ar=await sb.from("attachments").insert({entry_id:entryId,storage_path:path,original_name:file.name,mime_type:file.type||null,size_bytes:file.size,uploaded_by:user.id});
+ $("receiptSave").disabled=false;
+ if(ar.error){$("receiptStatus").textContent="Fichier envoyé mais indexation impossible : "+ar.error.message;$("receiptStatus").className="notice err";return}
+ $("receiptStatus").textContent="Justificatif ajouté ✅";$("receiptStatus").className="notice ok";await loadEntries();renderAll();
+}
 function csv(){let rows=[["Pièce","Date","Type","Libellé","Tiers","Catégorie","Compte","Montant","Statut"],...entries.map(e=>[e.piece_number,e.entry_date,e.type,e.label,e.third_party||"",catName(e.category_id),accName(e.account_id),e.amount,e.status])];let s=rows.map(r=>r.map(v=>'"'+String(v).replaceAll('"','""')+'"').join(";")).join("\n"),blob=new Blob(["\ufeff"+s],{type:"text/csv;charset=utf-8"}),a=document.createElement("a");a.href=URL.createObjectURL(blob);a.download="livre-comptes-"+(fy?.label||"RCSQ")+".csv";a.click();setTimeout(()=>URL.revokeObjectURL(a.href),1000)}
 function esc(s){return String(s??"").replace(/[&<>"']/g,m=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[m]))}
 $("loginBtn").addEventListener("click",login);$("signupBtn").addEventListener("click",signup);$("logoutBtn").addEventListener("click",async()=>{await sb.auth.signOut();location.reload()});
 document.querySelectorAll("nav button").forEach(b=>b.addEventListener("click",()=>showTab(b.dataset.tab)));document.querySelectorAll(".newEntry").forEach(b=>b.addEventListener("click",()=>openEntry(b.dataset.type)));
 document.querySelector(".gotoLedger").addEventListener("click",()=>showTab("ledger"));document.querySelector(".gotoBudget").addEventListener("click",()=>showTab("budget"));$("closeEntry").addEventListener("click",()=> $("entryCard").classList.add("hidden"));
-$("draftBtn").addEventListener("click",()=>saveEntry("brouillon"));$("validateBtn").addEventListener("click",()=>saveEntry("validee"));$("refreshBtn").addEventListener("click",async()=>{await loadEntries();renderAll()});$("csvBtn").addEventListener("click",csv);$("budgetEditClose").addEventListener("click",()=>$("budgetEdit").classList.add("hidden"));$("budgetEditSave").addEventListener("click",saveBudgetEdit);
+$("draftBtn").addEventListener("click",()=>saveEntry("brouillon"));$("validateBtn").addEventListener("click",()=>saveEntry("validee"));$("refreshBtn").addEventListener("click",async()=>{await loadEntries();renderAll()});$("csvBtn").addEventListener("click",csv);$("budgetEditClose").addEventListener("click",()=>$("budgetEdit").classList.add("hidden"));$("budgetEditSave").addEventListener("click",saveBudgetEdit);$("receiptClose").addEventListener("click",()=>$("receiptCard").classList.add("hidden"));$("receiptSave").addEventListener("click",saveReceipt);
 sb.auth.onAuthStateChange((event,session)=>{if(event==="SIGNED_IN"&&session&&!user){user=session.user;setTimeout(boot,0)}});
 boot();
 })();
