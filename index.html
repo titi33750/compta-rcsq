@@ -11,7 +11,7 @@ header{background:linear-gradient(135deg,var(--bb),var(--b));color:white;padding
 header h1{margin:0;font-size:27px}header small{opacity:.9}.wrap{max-width:1100px;margin:auto;padding:16px}
 .card{background:#fff;border-radius:20px;padding:18px;box-shadow:0 8px 28px #19345b12;margin-bottom:14px}
 .grid{display:grid;grid-template-columns:repeat(2,1fr);gap:12px}.stat b{font-size:25px;display:block;margin-top:5px}
-button,.btn{border:0;border-radius:13px;padding:12px 15px;font-weight:750;font-size:15px;cursor:pointer}.primary{background:var(--b);color:white}.good{background:var(--g);color:white}.bad{background:var(--r);color:white}.soft{background:#edf2fb;color:var(--b)}
+button,.btn{border:0;border-radius:13px;padding:12px 15px;font-weight:750;font-size:15px;cursor:pointer}.primary{background:var(--b);color:white}.primary:disabled{opacity:.55;cursor:wait}.good{background:var(--g);color:white}.bad{background:var(--r);color:white}.soft{background:#edf2fb;color:var(--b)}
 .actions{display:flex;gap:9px;flex-wrap:wrap}.hidden{display:none!important}
 nav{display:flex;gap:6px;overflow:auto;padding-bottom:4px}.tab{white-space:nowrap;background:#edf2fb;color:var(--b)}.tab.on{background:var(--b);color:#fff}
 label{display:block;font-size:13px;font-weight:700;margin:11px 0 5px}input,select,textarea{width:100%;padding:12px;border:1px solid #ccd4df;border-radius:11px;font:inherit;background:white}textarea{min-height:80px}
@@ -29,9 +29,9 @@ table{width:100%;border-collapse:collapse;font-size:14px}th,td{text-align:left;p
 <main class="wrap">
 <section id="auth" class="card auth">
 <h2>Connexion 🔐</h2>
-<label>E-mail</label><input id="email" type="email" autocomplete="email">
-<label>Mot de passe</label><input id="password" type="password" autocomplete="current-password">
-<div class="actions" style="margin-top:14px"><button class="primary" onclick="login()">Connexion</button><button class="soft" onclick="signup()">Créer un compte</button></div>
+<label>E-mail</label><input id="loginEmail" type="email" autocomplete="email">
+<label>Mot de passe</label><input id="loginPassword" type="password" autocomplete="current-password">
+<div class="actions" style="margin-top:14px"><button type="button" class="primary" onclick="login()">Connexion</button><button type="button" class="soft" onclick="signup()">Créer un compte</button></div>
 <div id="authMsg" class="muted" style="margin-top:10px"></div>
 </section>
 
@@ -86,8 +86,28 @@ const eur=n=>new Intl.NumberFormat('fr-FR',{style:'currency',currency:'EUR'}).fo
 const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const $=id=>document.getElementById(id);
 
-async function signup(){let {error}=await sb.auth.signUp({email:$('email').value.trim(),password:$('password').value});$('authMsg').textContent=error?error.message:"Compte créé. Si un e-mail de confirmation arrive, valide-le puis reconnecte-toi."}
-async function login(){let {error}=await sb.auth.signInWithPassword({email:$('email').value.trim(),password:$('password').value});$('authMsg').textContent=error?error.message:"Connexion…"}
+async function signup(){
+ const msg=$('authMsg'); msg.textContent='Création du compte…';
+ try{
+  const email=$('loginEmail').value.trim(), password=$('loginPassword').value;
+  if(!email||!password){msg.textContent='Renseigne ton e-mail et ton mot de passe.';return}
+  const {error}=await sb.auth.signUp({email,password});
+  msg.textContent=error?'Création refusée : '+error.message:"Compte créé. Si un e-mail de confirmation arrive, valide-le puis reconnecte-toi.";
+ }catch(e){msg.textContent='Erreur : '+(e?.message||String(e))}
+}
+async function login(){
+ const msg=$('authMsg'), btn=document.querySelector('#auth .primary');
+ msg.textContent='Connexion en cours…'; btn.disabled=true;
+ try{
+  const email=$('loginEmail').value.trim(), password=$('loginPassword').value;
+  if(!email||!password){msg.textContent='Renseigne ton e-mail et ton mot de passe.';return}
+  const {data,error}=await sb.auth.signInWithPassword({email,password});
+  if(error){msg.textContent='Connexion refusée : '+error.message;return}
+  if(data?.session){msg.textContent='✓ Connecté';await boot()}
+  else msg.textContent='Connexion non finalisée. Réessaie.';
+ }catch(e){msg.textContent='Erreur de connexion : '+(e?.message||String(e))}
+ finally{btn.disabled=false}
+}
 async function logout(){await sb.auth.signOut();location.reload()}
 async function boot(){
  const {data:{session}}=await sb.auth.getSession();
