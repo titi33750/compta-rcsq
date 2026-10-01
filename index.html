@@ -120,6 +120,19 @@ table{width:100%;border-collapse:collapse;font-size:14px}th,td{text-align:left;p
 <button id="receiptSave" class="btn primary" style="margin-top:14px;width:100%">Envoyer le justificatif</button>
 <div id="receiptStatus" class="notice hidden"></div>
 </div>
+<div id="editEntryCard" class="card hidden">
+ <div class="sectionTitle"><h2>✏️ Modifier l’écriture</h2><button id="editEntryClose" class="btn light">Fermer</button></div>
+ <p id="editEntryPiece" style="font-weight:800"></p>
+ <div class="formgrid">
+  <div><label>Date</label><input id="editDate" type="date"></div><div><label>Montant</label><input id="editAmount" type="number" min="0.01" step="0.01" inputmode="decimal"></div>
+  <div class="wide"><label>Libellé</label><input id="editLabel"></div><div><label>Tiers</label><input id="editThird"></div>
+  <div><label>Catégorie</label><select id="editCategory"></select></div><div><label>Compte</label><select id="editAccount"></select></div>
+  <div><label>Moyen de paiement</label><input id="editPayment"></div><div class="wide"><label>Notes</label><textarea id="editNotes" rows="3"></textarea></div>
+ </div>
+ <div class="notice" style="margin-top:12px">🔐 La modification sera enregistrée dans l’historique. L’écriture n’est pas supprimée.</div>
+ <button id="editEntrySave" class="btn primary" style="margin-top:14px;width:100%">Enregistrer les modifications</button>
+ <div id="editEntryStatus" class="notice hidden"></div><div id="entryHistory" style="margin-top:18px"></div>
+</div>
 </section>
 </main>
 
@@ -177,10 +190,12 @@ function renderAll(){
  return `<article class="ledgerCard">
    <div class="ledgerCardTop"><div><strong>${esc(e.label)}</strong><br><small>${frDate(e.entry_date)} · ${esc(e.piece_number)}</small></div><div class="ledgerCardAmount ${e.type==="recette"?"green":"red"}">${e.type==="recette"?"+":"−"} ${euro(e.amount)}</div></div>
    <div class="ledgerMeta"><strong>${e.type==="recette"?"Recette":"Dépense"}</strong> · ${esc(e.status)}<br>Catégorie : ${esc(catName(e.category_id))}<br>Compte : ${esc(accName(e.account_id))}${e.third_party?`<br>Tiers : ${esc(e.third_party)}`:""}</div>
-   <div style="margin-top:12px">${att?`<button class="btn light receiptView" data-id="${att.id}">📎 Voir le justificatif</button> <small>${esc(att.original_name)}</small>`:`<div style="color:#a15c00;font-weight:750;margin-bottom:8px">⚠️ Justificatif manquant</div><button class="btn light receiptAdd" data-entry="${e.id}">📎 Ajouter un justificatif</button>`}</div>
+   <div style="margin-top:12px">${att?`<button class="btn light receiptView" data-id="${att.id}">📎 Voir le justificatif</button> <small>${esc(att.original_name)}</small>`:`<div style="color:#a15c00;font-weight:750;margin-bottom:8px">⚠️ Justificatif manquant</div><button class="btn light receiptAdd" data-entry="${e.id}">📎 Ajouter un justificatif</button>`}
+ ${["admin","tresorier","saisie"].includes(profile.role)?`<button class="btn light entryEditBtn" data-entry="${e.id}" style="margin-top:8px">✏️ Modifier</button>`:""}</div>
  </article>`}).join(""):"Aucune opération.";
  document.querySelectorAll(".receiptView").forEach(b=>b.addEventListener("click",()=>viewReceipt(b.dataset.id)));
  document.querySelectorAll(".receiptAdd").forEach(b=>b.addEventListener("click",()=>openReceiptUpload(b.dataset.entry)));
+ document.querySelectorAll(".entryEditBtn").forEach(b=>b.addEventListener("click",()=>openEntryEdit(b.dataset.entry)));
  renderBudget();
 }
 function renderBudget(){
@@ -257,6 +272,32 @@ async function saveEntry(status){
 function entryMsg(m,k){$("entryStatus").textContent=m;$("entryStatus").className="notice "+(k||"");$("entryStatus").classList.remove("hidden")}
 function showTab(id){document.querySelectorAll(".tab").forEach(x=>x.classList.add("hidden"));$(id).classList.remove("hidden");document.querySelectorAll("nav button").forEach(x=>x.classList.toggle("active",x.dataset.tab===id))}
 
+
+async function openEntryEdit(entryId){
+ if(!["admin","tresorier","saisie"].includes(profile.role)){alert("Ton rôle est en lecture seule.");return}
+ let e=entries.find(x=>x.id===entryId);if(!e)return;
+ $("editEntryCard").dataset.entry=entryId;$("editEntryPiece").textContent=e.piece_number+" · "+(e.type==="depense"?"Dépense":"Recette");
+ $("editDate").value=e.entry_date;$("editAmount").value=e.amount;$("editLabel").value=e.label||"";$("editThird").value=e.third_party||"";
+ $("editPayment").value=e.payment_method||"";$("editNotes").value=e.notes||"";
+ $("editCategory").innerHTML=cats.filter(c=>c.type===e.type).map(c=>`<option value="${c.id}" ${c.id===e.category_id?"selected":""}>${esc(catName(c.id))}</option>`).join("");
+ $("editAccount").innerHTML=accounts.map(a=>`<option value="${a.id}" ${a.id===e.account_id?"selected":""}>${esc(a.name)}</option>`).join("");
+ $("editEntryStatus").classList.add("hidden");$("editEntryCard").classList.remove("hidden");await loadEntryHistory(entryId);$("editEntryCard").scrollIntoView({behavior:"smooth"});
+}
+async function saveEntryEdit(){
+ let id=$("editEntryCard").dataset.entry,e=entries.find(x=>x.id===id);if(!e)return;
+ let amount=Number($("editAmount").value);if(!amount||amount<=0||!$("editDate").value||!$("editLabel").value.trim()){alert("Date, libellé et montant sont obligatoires.");return}
+ $("editEntrySave").disabled=true;
+ let payload={entry_date:$("editDate").value,amount,label:$("editLabel").value.trim(),third_party:$("editThird").value.trim()||null,category_id:$("editCategory").value||null,account_id:$("editAccount").value||null,payment_method:$("editPayment").value.trim()||null,notes:$("editNotes").value.trim()||null,updated_at:new Date().toISOString()};
+ let {error}=await sb.from("entries").update(payload).eq("id",id);$("editEntrySave").disabled=false;
+ if(error){$("editEntryStatus").textContent="Erreur : "+error.message;$("editEntryStatus").className="notice err";return}
+ $("editEntryStatus").textContent="Modification enregistrée et historisée ✅";$("editEntryStatus").className="notice ok";await loadEntries();renderAll();await loadEntryHistory(id);
+}
+async function loadEntryHistory(entryId){
+ if(!["admin","tresorier"].includes(profile.role)){$("entryHistory").innerHTML="<small>Historique détaillé visible par l’administrateur et le trésorier.</small>";return}
+ let {data,error}=await sb.from("audit_log").select("*").eq("table_name","entries").eq("record_id",entryId).order("changed_at",{ascending:false}).limit(20);
+ if(error){$("entryHistory").innerHTML="<small>Historique indisponible.</small>";return}
+ $("entryHistory").innerHTML=`<h3>🕘 Historique</h3>`+(data?.length?data.map(a=>`<div style="padding:10px 0;border-top:1px solid #e5eaf2"><strong>${esc(a.action)}</strong> · ${new Date(a.changed_at).toLocaleString("fr-FR")}<br><small>Utilisateur : ${esc(a.user_id||"système")}</small></div>`).join(""):"<small>Aucune modification enregistrée.</small>");
+}
 async function viewReceipt(id){
  let a=attachments.find(x=>x.id===id);if(!a)return;
  let {data,error}=await sb.storage.from("justificatifs").createSignedUrl(a.storage_path,300);
@@ -286,7 +327,7 @@ function esc(s){return String(s??"").replace(/[&<>"']/g,m=>({"&":"&amp;","<":"&l
 $("loginBtn").addEventListener("click",login);$("signupBtn").addEventListener("click",signup);$("logoutBtn").addEventListener("click",async()=>{await sb.auth.signOut();location.reload()});
 document.querySelectorAll("nav button").forEach(b=>b.addEventListener("click",()=>showTab(b.dataset.tab)));document.querySelectorAll(".newEntry").forEach(b=>b.addEventListener("click",()=>openEntry(b.dataset.type)));
 document.querySelector(".gotoLedger").addEventListener("click",()=>showTab("ledger"));document.querySelector(".gotoBudget").addEventListener("click",()=>showTab("budget"));$("closeEntry").addEventListener("click",()=> $("entryCard").classList.add("hidden"));
-$("draftBtn").addEventListener("click",()=>saveEntry("brouillon"));$("validateBtn").addEventListener("click",()=>saveEntry("validee"));$("refreshBtn").addEventListener("click",async()=>{await loadEntries();renderAll()});$("csvBtn").addEventListener("click",csv);$("budgetEditClose").addEventListener("click",()=>$("budgetEdit").classList.add("hidden"));$("budgetEditSave").addEventListener("click",saveBudgetEdit);$("receiptClose").addEventListener("click",()=>$("receiptCard").classList.add("hidden"));$("receiptSave").addEventListener("click",saveReceipt);
+$("draftBtn").addEventListener("click",()=>saveEntry("brouillon"));$("validateBtn").addEventListener("click",()=>saveEntry("validee"));$("refreshBtn").addEventListener("click",async()=>{await loadEntries();renderAll()});$("csvBtn").addEventListener("click",csv);$("budgetEditClose").addEventListener("click",()=>$("budgetEdit").classList.add("hidden"));$("budgetEditSave").addEventListener("click",saveBudgetEdit);$("receiptClose").addEventListener("click",()=>$("receiptCard").classList.add("hidden"));$("receiptSave").addEventListener("click",saveReceipt);$("editEntryClose").addEventListener("click",()=>$("editEntryCard").classList.add("hidden"));$("editEntrySave").addEventListener("click",saveEntryEdit);
 sb.auth.onAuthStateChange((event,session)=>{if(event==="SIGNED_IN"&&session&&!user){user=session.user;setTimeout(boot,0)}});
 boot();
 })();
