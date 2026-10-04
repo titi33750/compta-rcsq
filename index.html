@@ -101,6 +101,11 @@ table{width:100%;border-collapse:collapse;font-size:14px}th,td{text-align:left;p
 <div class="card"><div class="sectionTitle"><div><h2>🏦 Rapprochement bancaire</h2><small>Importe un relevé CSV ou PDF et rattache chaque mouvement à une écriture.</small></div></div>
 <label>Relevé bancaire CSV / PDF</label><input id="bankFile" type="file" accept=".csv,text/csv,.pdf,application/pdf">
 <div class="row" style="margin-top:12px"><button id="bankImportBtn" class="btn primary">Importer le relevé</button><button id="bankClearBtn" class="btn light">Vider l’import</button></div>
+<div id="bankSharedBox" style="margin-top:14px">
+<label>Relevés partagés</label>
+<select id="bankStatementSelect"><option value="">Aucun relevé enregistré</option></select>
+<div class="row" style="margin-top:10px"><button id="bankLoadBtn" class="btn light">🔄 Charger le relevé partagé</button><button id="bankSaveBtn" class="btn primary">☁️ Enregistrer / synchroniser</button></div>
+</div>
 <div id="bankNotice" class="notice">CSV : import direct. PDF : lecture locale du relevé dans ton navigateur, sans envoi vers GitHub.</div>
 <div id="bankControl" class="grid" style="margin-top:14px">
  <div class="stat"><span>Solde précédent</span><strong id="bankOpening">—</strong></div>
@@ -170,7 +175,7 @@ window.pdfjsLib=pdfjsLib;
 (function(){
 const URL="https://wrrwanpgvqozesdcqozl.supabase.co", KEY="sb_publishable_616PWlfFWgNPkfnhwnsRDw_qmzbvo-Q";
 const $=id=>document.getElementById(id), euro=n=>new Intl.NumberFormat("fr-FR",{style:"currency",currency:"EUR"}).format(Number(n||0));
-let sb=null,user=null,profile=null,fy=null,accounts=[],cats=[],entries=[],attachments=[],knownProfiles=[],entryType="depense",bankRows=[],bankMeta={opening:null,closing:null,debits:0,credits:0};
+let sb=null,user=null,profile=null,fy=null,accounts=[],cats=[],entries=[],attachments=[],knownProfiles=[],entryType="depense",bankRows=[],bankMeta={opening:null,closing:null,debits:0,credits:0},bankStatementId=null,bankStatements=[];
 function authMsg(m,k){$("authStatus").textContent=m;$("authStatus").className=k||""}
 if(!window.supabase?.createClient){authMsg("ERREUR : Supabase ne s'est pas chargé.","err");return}
 sb=window.supabase.createClient(URL,KEY);authMsg("Supabase chargé ✅","ok");
@@ -204,7 +209,7 @@ async function boot(){
  profile=p.data||{display_name:user.email.split("@")[0],role:"lecture"};fy=y.data;accounts=a.data||[];cats=c.data||[];knownProfiles=profile?.id?[profile]:[{id:user.id,display_name:profile.display_name||user.email.split("@")[0],role:profile.role}];
  $("welcome").textContent="Bienvenue "+(profile.display_name||user.email);$("roleBadge").textContent="Rôle : "+profile.role;$("headerUser").textContent=user.email;
  if(fy){$("exerciseHead").textContent="Exercice "+fy.label;$("period").textContent=`Du ${frDate(fy.start_date)} au ${frDate(fy.end_date)}`}
- fillAccounts();await loadEntries();renderAll();if(profile.role==="admin"){$("usersTabBtn").classList.remove("hidden");await loadUsers();}else{$("usersTabBtn").classList.add("hidden");}
+ fillAccounts();await loadEntries();renderAll();if(["admin","tresorier"].includes(profile.role))await loadBankStatements();if(profile.role==="admin"){$("usersTabBtn").classList.remove("hidden");await loadUsers();}else{$("usersTabBtn").classList.add("hidden");}
 }
 function frDate(d){return d?new Date(d+"T12:00:00").toLocaleDateString("fr-FR"):""}
 async function loadEntries(){if(!fy)return;const {data,error}=await sb.from("entries").select("*").eq("fiscal_year_id",fy.id).order("entry_date",{ascending:false}).order("created_at",{ascending:false});if(error)console.error(error);entries=data||[];if(entries.length){const ar=await sb.from("attachments").select("*").in("entry_id",entries.map(e=>e.id)).order("created_at",{ascending:false});attachments=ar.data||[]}else attachments=[]}
@@ -417,7 +422,7 @@ function renderBank(){
  $("bankSummary").textContent=`${bankRows.length} mouvement${bankRows.length>1?"s":""} · ${ok} rapproché${ok>1?"s":""} · ${maybe} probable${maybe>1?"s":""}`;
  $("bankOpening").textContent=bankMeta.opening==null?"—":euro(bankMeta.opening);$("bankDebits").textContent=euro(bankMeta.debits);$("bankCredits").textContent=euro(bankMeta.credits);$("bankClosing").textContent=bankMeta.closing==null?"—":euro(bankMeta.closing);
  $("bankRows").innerHTML=bankRows.length?bankRows.map((r,i)=>{let e=entries.find(x=>x.id===r.match),cls=r.status==="rapproche"?"bank-ok":r.status==="probable"?"bank-maybe":"bank-no",lab=r.status==="rapproche"?"Rapproché":r.status==="probable"?"À vérifier":"Non rapproché";return `<article class="ledgerCard"><div class="ledgerCardTop"><div><strong>${esc(r.label)}</strong><br><small>${esc(r.date)}</small></div><div class="ledgerCardAmount ${r.amount>=0?"green":"red"}">${r.amount>=0?"+ ":"− "}${euro(Math.abs(r.amount))}</div></div><div style="margin-top:10px"><span class="bankStatus ${cls}">${lab}</span>${e?`<div class="ledgerMeta">↔ ${esc(e.piece_number)} · ${esc(e.label)} · ${euro(e.amount)}</div>`:""}</div><label style="margin-top:10px">Rattacher à une écriture</label><select class="bankMatch" data-i="${i}"><option value="">Aucune</option>${entries.map(x=>`<option value="${x.id}" ${x.id===r.match?"selected":""}>${esc(x.piece_number)} · ${esc(x.label)} · ${euro(x.amount)}</option>`).join("")}</select>${!r.match&&["admin","tresorier","saisie"].includes(profile.role)?`<button class="btn primary bankCreate" data-i="${i}" style="margin-top:10px;width:100%">＋ Créer l’écriture</button>`:""}</article>`}).join(""):"Aucun relevé importé.";
- document.querySelectorAll(".bankMatch").forEach(s=>s.addEventListener("change",()=>{let r=bankRows[Number(s.dataset.i)];r.match=s.value||null;r.status=r.match?"rapproche":"non_rapproche";renderBank()}));
+ document.querySelectorAll(".bankMatch").forEach(s=>s.addEventListener("change",async()=>{let i=Number(s.dataset.i),r=bankRows[i];r.match=s.value||null;r.status=r.match?"rapproche":"non_rapproche";if(bankStatementId)await persistBankMatch(i);renderBank()}));
  document.querySelectorAll(".bankCreate").forEach(b=>b.addEventListener("click",()=>createFromBank(Number(b.dataset.i))));
 }
 function createFromBank(i){let r=bankRows[i];if(!r)return;openEntry(r.amount>=0?"recette":"depense");$("entryDate").value=isoGuess(r.date);$("entryAmount").value=Math.abs(r.amount).toFixed(2);$("entryLabel").value=r.label.slice(0,180);$("entryPayment").value=/prelevement/i.test(r.label)?"Prélèvement":/carte/i.test(r.label)?"Carte bancaire":"Virement";$("entryNotes").value="Créée depuis le rapprochement bancaire.";bankRows[i].status="non_rapproche"}
@@ -430,6 +435,63 @@ async function importBank(){
    $("bankNotice").textContent=`Relevé importé : ${bankRows.length} mouvement(s). Recherche des correspondances effectuée automatiquement ✅`;$("bankNotice").className="notice ok";suggestBankMatches()
  }catch(e){$("bankNotice").textContent="Import impossible : "+e.message;$("bankNotice").className="notice err"}
 }
+
+async function loadBankStatements(){
+ if(!["admin","tresorier"].includes(profile?.role)||!fy)return;
+ let {data,error}=await sb.from("bank_statements").select("*").eq("fiscal_year_id",fy.id).order("period_end",{ascending:false});
+ if(error){$("bankNotice").textContent="Relevés partagés indisponibles : "+error.message;$("bankNotice").className="notice err";return}
+ bankStatements=data||[];
+ $("bankStatementSelect").innerHTML='<option value="">Choisir un relevé partagé…</option>'+bankStatements.map(x=>`<option value="${x.id}">${frDate(x.period_start)} → ${frDate(x.period_end)} · ${esc(x.original_name||"Relevé bancaire")}</option>`).join("");
+ if(bankStatementId)$("bankStatementSelect").value=bankStatementId;
+}
+function bankPeriod(){
+ let ds=bankRows.map(r=>isoGuess(r.date)).filter(d=>/^\d{4}-\d{2}-\d{2}$/.test(d)).sort();
+ return ds.length?{start:ds[0],end:ds[ds.length-1]}:null;
+}
+async function saveSharedBank(){
+ if(!["admin","tresorier"].includes(profile?.role)){alert("Réservé à l’administrateur et au trésorier.");return}
+ if(!fy||!bankRows.length){$("bankNotice").textContent="Importe d’abord un relevé bancaire.";$("bankNotice").className="notice err";return}
+ let account=accounts.find(a=>a.type==="banque")||accounts[0],period=bankPeriod(),file=$("bankFile").files[0];
+ if(!account||!period){$("bankNotice").textContent="Compte bancaire ou période introuvable.";$("bankNotice").className="notice err";return}
+ $("bankSaveBtn").disabled=true;$("bankNotice").textContent="Synchronisation avec Supabase…";$("bankNotice").className="notice";
+ try{
+   let path=null;
+   if(file){
+     let safe=file.name.replace(/[^a-zA-Z0-9._-]/g,"_");
+     path=`${fy.label}/${period.start}_${period.end}/${Date.now()}-${safe}`;
+     let up=await sb.storage.from("releves-bancaires").upload(path,file,{upsert:false});
+     if(up.error)throw up.error;
+   }
+   let payload={fiscal_year_id:fy.id,account_id:account.id,period_start:period.start,period_end:period.end,opening_balance:bankMeta.opening,closing_balance:bankMeta.closing,total_debits:bankMeta.debits,total_credits:bankMeta.credits,original_name:file?.name||"Relevé bancaire",storage_path:path,imported_by:user.id};
+   let {data:st,error:se}=await sb.from("bank_statements").upsert(payload,{onConflict:"account_id,period_start,period_end"}).select().single();
+   if(se)throw se; bankStatementId=st.id;
+   let existing=await sb.from("bank_transactions").select("id").eq("statement_id",st.id);
+   if(existing.error)throw existing.error;
+   if(existing.data?.length){let del=await sb.from("bank_transactions").delete().eq("statement_id",st.id);if(del.error)throw del.error}
+   let tx=bankRows.map(r=>({statement_id:st.id,transaction_date:isoGuess(r.date),label:r.label,amount:r.amount,matched_entry_id:r.match||null,reconciliation_status:r.status||"non_rapproche",reconciled_by:r.match?user.id:null,reconciled_at:r.match?new Date().toISOString():null}));
+   let ins=await sb.from("bank_transactions").insert(tx);if(ins.error)throw ins.error;
+   $("bankNotice").textContent="Relevé et rapprochements synchronisés ✅";$("bankNotice").className="notice ok";await loadBankStatements();
+ }catch(e){$("bankNotice").textContent="Synchronisation impossible : "+e.message;$("bankNotice").className="notice err"}
+ finally{$("bankSaveBtn").disabled=false}
+}
+async function loadSharedBank(){
+ let id=$("bankStatementSelect").value;if(!id)return;
+ $("bankNotice").textContent="Chargement du relevé partagé…";$("bankNotice").className="notice";
+ let [{data:st,error:se},{data:tx,error:te}]=await Promise.all([sb.from("bank_statements").select("*").eq("id",id).single(),sb.from("bank_transactions").select("*").eq("statement_id",id).order("transaction_date")]);
+ if(se||te){$("bankNotice").textContent="Chargement impossible : "+(se?.message||te?.message);$("bankNotice").className="notice err";return}
+ bankStatementId=id;bankMeta={opening:st.opening_balance,closing:st.closing_balance,debits:Number(st.total_debits||0),credits:Number(st.total_credits||0)};
+ bankRows=(tx||[]).map(x=>({id:x.id,date:x.transaction_date,label:x.label,amount:Number(x.amount),match:x.matched_entry_id,status:x.reconciliation_status}));
+ $("bankFile").value="";$("bankNotice").textContent="Relevé partagé chargé ✅";$("bankNotice").className="notice ok";renderBank();
+}
+async function persistBankMatch(i){
+ if(!bankStatementId)return;
+ let r=bankRows[i];if(!r)return;
+ let payload={matched_entry_id:r.match||null,reconciliation_status:r.status,reconciled_by:r.match?user.id:null,reconciled_at:r.match?new Date().toISOString():null};
+ let {error}=await sb.from("bank_transactions").update(payload).eq("id",r.id);
+ if(error){$("bankNotice").textContent="Rapprochement non synchronisé : "+error.message;$("bankNotice").className="notice err"}
+ else{$("bankNotice").textContent="Rapprochement synchronisé ☁️";$("bankNotice").className="notice ok"}
+}
+
 
 
 async function loadUsers(){
@@ -467,7 +529,7 @@ function esc(s){return String(s??"").replace(/[&<>"']/g,m=>({"&":"&amp;","<":"&l
 $("togglePassword").addEventListener("click",togglePassword);$("forgotPassword").addEventListener("click",forgotPassword);$("loginBtn").addEventListener("click",login);$("signupBtn").addEventListener("click",signup);$("logoutBtn").addEventListener("click",async()=>{await sb.auth.signOut();location.reload()});
 document.querySelectorAll("nav button").forEach(b=>b.addEventListener("click",()=>showTab(b.dataset.tab)));document.querySelectorAll(".newEntry").forEach(b=>b.addEventListener("click",()=>openEntry(b.dataset.type)));
 document.querySelector(".gotoLedger").addEventListener("click",()=>showTab("ledger"));document.querySelector(".gotoBudget").addEventListener("click",()=>showTab("budget"));$("closeEntry").addEventListener("click",()=> $("entryCard").classList.add("hidden"));
-$("draftBtn").addEventListener("click",()=>saveEntry("brouillon"));$("validateBtn").addEventListener("click",()=>saveEntry("validee"));$("refreshBtn").addEventListener("click",async()=>{await loadEntries();renderAll()});$("csvBtn").addEventListener("click",csv);$("budgetEditClose").addEventListener("click",()=>$("budgetEdit").classList.add("hidden"));$("budgetEditSave").addEventListener("click",saveBudgetEdit);$("receiptClose").addEventListener("click",()=>$("receiptCard").classList.add("hidden"));$("receiptSave").addEventListener("click",saveReceipt);$("editEntryClose").addEventListener("click",()=>$("editEntryCard").classList.add("hidden"));$("editEntrySave").addEventListener("click",saveEntryEdit);$("usersRefreshBtn").addEventListener("click",loadUsers);$("bankImportBtn").addEventListener("click",importBank);$("bankClearBtn").addEventListener("click",()=>{bankRows=[];bankMeta={opening:null,closing:null,debits:0,credits:0};$("bankFile").value="";$("bankNotice").textContent="Import vidé.";$("bankNotice").className="notice";renderBank()});
+$("draftBtn").addEventListener("click",()=>saveEntry("brouillon"));$("validateBtn").addEventListener("click",()=>saveEntry("validee"));$("refreshBtn").addEventListener("click",async()=>{await loadEntries();renderAll()});$("csvBtn").addEventListener("click",csv);$("budgetEditClose").addEventListener("click",()=>$("budgetEdit").classList.add("hidden"));$("budgetEditSave").addEventListener("click",saveBudgetEdit);$("receiptClose").addEventListener("click",()=>$("receiptCard").classList.add("hidden"));$("receiptSave").addEventListener("click",saveReceipt);$("editEntryClose").addEventListener("click",()=>$("editEntryCard").classList.add("hidden"));$("editEntrySave").addEventListener("click",saveEntryEdit);$("usersRefreshBtn").addEventListener("click",loadUsers);$("bankImportBtn").addEventListener("click",importBank);$("bankSaveBtn").addEventListener("click",saveSharedBank);$("bankLoadBtn").addEventListener("click",loadSharedBank);$("bankClearBtn").addEventListener("click",()=>{bankRows=[];bankMeta={opening:null,closing:null,debits:0,credits:0};bankStatementId=null;$("bankFile").value="";$("bankNotice").textContent="Import vidé.";$("bankNotice").className="notice";renderBank()});
 sb.auth.onAuthStateChange((event,session)=>{if(event==="SIGNED_IN"&&session&&!user){user=session.user;setTimeout(boot,0)}});
 boot();
 })();
