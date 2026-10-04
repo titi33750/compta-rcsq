@@ -8,7 +8,7 @@
 *{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--ink)}button,input,select,textarea{font:inherit}
 header{background:linear-gradient(135deg,var(--b),#194fa5);color:white;padding:24px 20px}.head{max-width:1100px;margin:auto;display:flex;justify-content:space-between;gap:16px;align-items:center}.head h1{margin:0;font-size:30px}.head p{margin:3px 0 0;opacity:.9}
 main{max-width:1100px;margin:26px auto;padding:0 16px 50px}.card{background:white;border-radius:20px;padding:22px;box-shadow:0 10px 30px #173c7312;margin-bottom:18px}
-.login{max-width:540px;margin:42px auto}.hidden{display:none!important}label{display:block;font-weight:750;margin:13px 0 6px}input,select,textarea{width:100%;padding:13px;border:1px solid #cbd5e5;border-radius:12px;background:white}textarea{min-height:86px}
+.login{max-width:540px;margin:42px auto}.passwordWrap{position:relative}.passwordWrap input{padding-right:52px}.eyeBtn{position:absolute;right:6px;top:6px;width:42px;height:42px;border:0;background:transparent;border-radius:10px;font-size:20px;cursor:pointer}.linkBtn{border:0;background:transparent;color:var(--b2);font-weight:800;padding:10px 0;cursor:pointer}.bankStatus{display:inline-block;padding:5px 9px;border-radius:999px;font-size:12px;font-weight:850}.bank-ok{background:#eaf8ef;color:#166534}.bank-maybe{background:#fff7df;color:#8a5b00}.bank-no{background:#fff0f0;color:#a51d2d}.hidden{display:none!important}label{display:block;font-weight:750;margin:13px 0 6px}input,select,textarea{width:100%;padding:13px;border:1px solid #cbd5e5;border-radius:12px;background:white}textarea{min-height:86px}
 .btn{border:0;border-radius:12px;padding:12px 16px;font-weight:800;cursor:pointer}.primary{background:var(--b2);color:white}.light{background:#edf2fb;color:var(--b)}.danger{background:#fff0f0;color:var(--red)}.row{display:flex;gap:10px;flex-wrap:wrap}.row .btn{flex:1}
 #authStatus,.notice{margin-top:15px;padding:12px;border-radius:12px;background:#eef3fb}.ok{background:#eaf8ef!important;color:#166534}.err{background:#fff0f0!important;color:#a51d2d}
 .topbar{display:flex;justify-content:space-between;gap:12px;align-items:center;margin-bottom:18px}.badge{padding:7px 11px;background:#e9effa;border-radius:999px;font-size:13px;font-weight:800}
@@ -51,14 +51,14 @@ table{width:100%;border-collapse:collapse;font-size:14px}th,td{text-align:left;p
 <section id="loginView" class="card login">
 <h2>Connexion 🔐</h2>
 <label>E-mail</label><input id="loginEmail" type="email" autocomplete="username">
-<label>Mot de passe</label><input id="loginPassword" type="password" autocomplete="current-password">
+<label>Mot de passe</label><div class="passwordWrap"><input id="loginPassword" type="password" autocomplete="current-password"><button id="togglePassword" class="eyeBtn" type="button" aria-label="Afficher le mot de passe">👁️</button></div><button id="forgotPassword" type="button" class="linkBtn">Mot de passe oublié ?</button>
 <div class="row"><button id="loginBtn" type="button" class="btn primary">Connexion</button><button id="signupBtn" type="button" class="btn light">Créer un compte</button></div>
 <div id="authStatus">Chargement de la connexion…</div>
 </section>
 
 <section id="appView" class="hidden">
 <div class="topbar"><div><strong id="welcome">Bienvenue</strong><div class="badge" id="roleBadge">rôle</div></div><button id="logoutBtn" class="btn light">Déconnexion</button></div>
-<nav><button class="active" data-tab="dashboard">Tableau de bord</button><button data-tab="ledger">Livre de comptes</button><button data-tab="budget">Budget</button></nav>
+<nav><button class="active" data-tab="dashboard">Tableau de bord</button><button data-tab="ledger">Livre de comptes</button><button data-tab="budget">Budget</button><button data-tab="bank">Rapprochement bancaire</button></nav>
 
 <div id="dashboard" class="tab">
 <div class="grid">
@@ -95,6 +95,14 @@ table{width:100%;border-collapse:collapse;font-size:14px}th,td{text-align:left;p
  <button id="budgetEditSave" class="btn primary" style="margin-top:14px;width:100%">Enregistrer le prévisionnel</button>
  <div id="budgetEditStatus" class="notice hidden"></div>
 </div>
+</div>
+
+<div id="bank" class="tab hidden">
+<div class="card"><div class="sectionTitle"><div><h2>🏦 Rapprochement bancaire</h2><small>Importe un relevé CSV et rattache chaque mouvement à une écriture.</small></div></div>
+<label>Relevé bancaire CSV</label><input id="bankFile" type="file" accept=".csv,text/csv">
+<div class="row" style="margin-top:12px"><button id="bankImportBtn" class="btn primary">Importer le relevé</button><button id="bankClearBtn" class="btn light">Vider l’import</button></div>
+<div id="bankNotice" class="notice">Formats CSV courants acceptés. L’application essaie de reconnaître date, libellé, débit, crédit ou montant.</div></div>
+<div class="card"><div class="sectionTitle"><h2>Mouvements importés</h2><span id="bankSummary" class="badge">0 mouvement</span></div><div id="bankRows">Aucun relevé importé.</div></div>
 </div>
 
 <div id="entryCard" class="card hidden">
@@ -141,10 +149,13 @@ table{width:100%;border-collapse:collapse;font-size:14px}th,td{text-align:left;p
 (function(){
 const URL="https://wrrwanpgvqozesdcqozl.supabase.co", KEY="sb_publishable_616PWlfFWgNPkfnhwnsRDw_qmzbvo-Q";
 const $=id=>document.getElementById(id), euro=n=>new Intl.NumberFormat("fr-FR",{style:"currency",currency:"EUR"}).format(Number(n||0));
-let sb=null,user=null,profile=null,fy=null,accounts=[],cats=[],entries=[],attachments=[],knownProfiles=[],entryType="depense";
+let sb=null,user=null,profile=null,fy=null,accounts=[],cats=[],entries=[],attachments=[],knownProfiles=[],entryType="depense",bankRows=[];
 function authMsg(m,k){$("authStatus").textContent=m;$("authStatus").className=k||""}
 if(!window.supabase?.createClient){authMsg("ERREUR : Supabase ne s'est pas chargé.","err");return}
 sb=window.supabase.createClient(URL,KEY);authMsg("Supabase chargé ✅","ok");
+
+function togglePassword(){let i=$("loginPassword"),b=$("togglePassword");let show=i.type==="password";i.type=show?"text":"password";b.textContent=show?"🙈":"👁️";b.setAttribute("aria-label",show?"Masquer le mot de passe":"Afficher le mot de passe")}
+async function forgotPassword(){let email=$("loginEmail").value.trim();if(!email)return authMsg("Entre d’abord ton adresse e-mail.","err");try{let {error}=await sb.auth.resetPasswordForEmail(email,{redirectTo:location.href.split("#")[0]});if(error)throw error;authMsg("E-mail de réinitialisation envoyé ✅","ok")}catch(e){authMsg("Réinitialisation impossible : "+e.message,"err")}}
 
 async function login(){
  const email=$("loginEmail").value.trim(),password=$("loginPassword").value;
@@ -349,12 +360,21 @@ async function saveReceipt(){
  if(ar.error){$("receiptStatus").textContent="Fichier envoyé mais indexation impossible : "+ar.error.message;$("receiptStatus").className="notice err";return}
  $("receiptStatus").textContent="Justificatif ajouté ✅";$("receiptStatus").className="notice ok";await loadEntries();renderAll();
 }
+function parseCsvLine(line,sep){let out=[],cur="",q=false;for(let i=0;i<line.length;i++){let c=line[i];if(c==='"'){if(q&&line[i+1]==='"'){cur+='"';i++}else q=!q}else if(c===sep&&!q){out.push(cur.trim());cur=""}else cur+=c}out.push(cur.trim());return out}
+function parseMoney(v){if(v==null)return 0;let x=String(v).replace(/\s/g,"").replace(/€/g,"").replace(/\.(?=\d{3}(?:\D|$))/g,"").replace(",",".").replace(/[^0-9+\-.]/g,"");let n=Number(x);return Number.isFinite(n)?n:0}
+function norm(s){return String(s||"").normalize("NFD").replace(/[\u0300-\u036f]/g,"").toLowerCase().trim()}
+function parseBankCsv(text){let lines=text.replace(/^\uFEFF/,"").split(/\r?\n/).filter(x=>x.trim());if(lines.length<2)throw new Error("Le fichier CSV semble vide.");let sep=(lines[0].match(/;/g)||[]).length>=(lines[0].match(/,/g)||[]).length?";":",";let head=parseCsvLine(lines[0],sep).map(norm);let idx=(names)=>head.findIndex(h=>names.some(n=>h.includes(n)));let di=idx(["date"]),li=idx(["libelle","description","operation","intitule"]),mi=idx(["montant","amount"]),debi=idx(["debit"]),cri=idx(["credit"]);if(di<0||li<0||(mi<0&&debi<0&&cri<0))throw new Error("Colonnes non reconnues. Il faut au minimum Date, Libellé et Montant, ou Débit/Crédit.");return lines.slice(1).map((l,n)=>{let r=parseCsvLine(l,sep),amount=mi>=0?parseMoney(r[mi]):parseMoney(r[cri])-Math.abs(parseMoney(r[debi]));return{id:"b"+n,date:r[di]||"",label:r[li]||"",amount,match:null,status:"non_rapproche"}}).filter(r=>r.date||r.label||r.amount)}
+function isoGuess(d){let m=String(d).match(/(\d{1,2})[\/.-](\d{1,2})[\/.-](\d{2,4})/);if(!m)return String(d).slice(0,10);let y=m[3].length===2?"20"+m[3]:m[3];return `${y}-${m[2].padStart(2,"0")}-${m[1].padStart(2,"0")}`}
+function suggestBankMatches(){bankRows.forEach(r=>{let rd=isoGuess(r.date),c=entries.map(e=>{let expected=e.type==="recette"?Number(e.amount):-Number(e.amount),diff=Math.abs(expected-r.amount),days=Math.abs((new Date(e.entry_date)-new Date(rd))/86400000),score=(diff<0.01?100:diff<1?60:0)+(days===0?40:days<=3?20:0)+(norm(r.label).includes(norm(e.label).slice(0,8))?20:0);return{e,score}}).filter(x=>x.score>=80).sort((a,b)=>b.score-a.score);if(c.length){r.match=c[0].e.id;r.status=c[0].score>=120?"rapproche":"probable"}});renderBank()}
+function renderBank(){let ok=bankRows.filter(r=>r.status==="rapproche").length,maybe=bankRows.filter(r=>r.status==="probable").length;$("bankSummary").textContent=`${bankRows.length} mouvement${bankRows.length>1?"s":""} · ${ok} rapproché${ok>1?"s":""} · ${maybe} probable${maybe>1?"s":""}`;$("bankRows").innerHTML=bankRows.length?bankRows.map((r,i)=>{let e=entries.find(x=>x.id===r.match),cls=r.status==="rapproche"?"bank-ok":r.status==="probable"?"bank-maybe":"bank-no",lab=r.status==="rapproche"?"Rapproché":r.status==="probable"?"Correspondance probable":"Non rapproché";return `<article class="ledgerCard"><div class="ledgerCardTop"><div><strong>${esc(r.label)}</strong><br><small>${esc(r.date)}</small></div><div class="ledgerCardAmount ${r.amount>=0?"green":"red"}">${euro(r.amount)}</div></div><div style="margin-top:10px"><span class="bankStatus ${cls}">${lab}</span>${e?`<div class="ledgerMeta">↔ ${esc(e.piece_number)} · ${esc(e.label)} · ${euro(e.amount)}</div>`:""}</div><label style="margin-top:10px">Rattacher à une écriture</label><select class="bankMatch" data-i="${i}"><option value="">Aucune</option>${entries.map(x=>`<option value="${x.id}" ${x.id===r.match?"selected":""}>${esc(x.piece_number)} · ${esc(x.label)} · ${euro(x.amount)}</option>`).join("")}</select></article>`}).join(""):"Aucun relevé importé.";document.querySelectorAll(".bankMatch").forEach(s=>s.addEventListener("change",()=>{let r=bankRows[Number(s.dataset.i)];r.match=s.value||null;r.status=r.match?"rapproche":"non_rapproche";renderBank()}))}
+async function importBank(){let f=$("bankFile").files[0];if(!f)return;try{bankRows=parseBankCsv(await f.text());$("bankNotice").textContent="Relevé importé. Recherche des correspondances effectuée automatiquement ✅";$("bankNotice").className="notice ok";suggestBankMatches()}catch(e){$("bankNotice").textContent="Import impossible : "+e.message;$("bankNotice").className="notice err"}}
+
 function csv(){let rows=[["Pièce","Date","Type","Libellé","Tiers","Catégorie","Compte","Montant","Statut"],...entries.map(e=>[e.piece_number,e.entry_date,e.type,e.label,e.third_party||"",catName(e.category_id),accName(e.account_id),e.amount,e.status])];let s=rows.map(r=>r.map(v=>'"'+String(v).replaceAll('"','""')+'"').join(";")).join("\n"),blob=new Blob(["\ufeff"+s],{type:"text/csv;charset=utf-8"}),a=document.createElement("a");a.href=URL.createObjectURL(blob);a.download="livre-comptes-"+(fy?.label||"RCSQ")+".csv";a.click();setTimeout(()=>URL.revokeObjectURL(a.href),1000)}
 function esc(s){return String(s??"").replace(/[&<>"']/g,m=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[m]))}
-$("loginBtn").addEventListener("click",login);$("signupBtn").addEventListener("click",signup);$("logoutBtn").addEventListener("click",async()=>{await sb.auth.signOut();location.reload()});
+$("togglePassword").addEventListener("click",togglePassword);$("forgotPassword").addEventListener("click",forgotPassword);$("loginBtn").addEventListener("click",login);$("signupBtn").addEventListener("click",signup);$("logoutBtn").addEventListener("click",async()=>{await sb.auth.signOut();location.reload()});
 document.querySelectorAll("nav button").forEach(b=>b.addEventListener("click",()=>showTab(b.dataset.tab)));document.querySelectorAll(".newEntry").forEach(b=>b.addEventListener("click",()=>openEntry(b.dataset.type)));
 document.querySelector(".gotoLedger").addEventListener("click",()=>showTab("ledger"));document.querySelector(".gotoBudget").addEventListener("click",()=>showTab("budget"));$("closeEntry").addEventListener("click",()=> $("entryCard").classList.add("hidden"));
-$("draftBtn").addEventListener("click",()=>saveEntry("brouillon"));$("validateBtn").addEventListener("click",()=>saveEntry("validee"));$("refreshBtn").addEventListener("click",async()=>{await loadEntries();renderAll()});$("csvBtn").addEventListener("click",csv);$("budgetEditClose").addEventListener("click",()=>$("budgetEdit").classList.add("hidden"));$("budgetEditSave").addEventListener("click",saveBudgetEdit);$("receiptClose").addEventListener("click",()=>$("receiptCard").classList.add("hidden"));$("receiptSave").addEventListener("click",saveReceipt);$("editEntryClose").addEventListener("click",()=>$("editEntryCard").classList.add("hidden"));$("editEntrySave").addEventListener("click",saveEntryEdit);
+$("draftBtn").addEventListener("click",()=>saveEntry("brouillon"));$("validateBtn").addEventListener("click",()=>saveEntry("validee"));$("refreshBtn").addEventListener("click",async()=>{await loadEntries();renderAll()});$("csvBtn").addEventListener("click",csv);$("budgetEditClose").addEventListener("click",()=>$("budgetEdit").classList.add("hidden"));$("budgetEditSave").addEventListener("click",saveBudgetEdit);$("receiptClose").addEventListener("click",()=>$("receiptCard").classList.add("hidden"));$("receiptSave").addEventListener("click",saveReceipt);$("editEntryClose").addEventListener("click",()=>$("editEntryCard").classList.add("hidden"));$("editEntrySave").addEventListener("click",saveEntryEdit);$("bankImportBtn").addEventListener("click",importBank);$("bankClearBtn").addEventListener("click",()=>{bankRows=[];$("bankFile").value="";$("bankNotice").textContent="Import vidé.";$("bankNotice").className="notice";renderBank()});
 sb.auth.onAuthStateChange((event,session)=>{if(event==="SIGNED_IN"&&session&&!user){user=session.user;setTimeout(boot,0)}});
 boot();
 })();
