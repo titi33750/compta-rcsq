@@ -43,6 +43,13 @@ table{width:100%;border-collapse:collapse;font-size:14px}th,td{text-align:left;p
  header,.topbar,nav,#entryCard{display:none!important}
 }
 @media(max-width:760px){#budget .grid{grid-template-columns:1fr 1fr!important}#budget .stat strong{font-size:20px}}
+/* Mobile: keep bank amounts inside each movement card */
+@media(max-width:760px){
+  #bankRows .ledgerCardTop{display:grid!important;grid-template-columns:minmax(0,1fr)!important;gap:8px!important}
+  #bankRows .ledgerCardTop>div:first-child{min-width:0!important;overflow-wrap:anywhere!important;word-break:break-word!important}
+  #bankRows .ledgerCardAmount{justify-self:end!important;max-width:100%!important;white-space:nowrap!important;font-size:20px!important;line-height:1.2!important}
+}
+
 </style>
 </head>
 <body>
