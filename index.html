@@ -27,7 +27,7 @@ table{width:100%;border-collapse:collapse;font-size:14px}th,td{text-align:left;p
 @media(max-width:760px){
   nav{display:grid!important;grid-template-columns:1fr 1fr!important;gap:8px!important;overflow:visible!important}
   nav button{width:100%!important;min-width:0!important;white-space:normal!important;padding:10px 6px!important;font-size:14px!important}
-  nav button[data-tab="dashboard"]{grid-column:1/-1}
+  nav button[data-tab="dashboard"],nav button[data-tab="users"]{grid-column:1/-1}
   .ledgerDesktop{display:none!important}
   .ledgerMobile{display:block!important}
   .ledgerCard{border:1px solid #dfe6f1;border-radius:16px;padding:15px;margin:12px 0;background:#fff}
@@ -58,7 +58,7 @@ table{width:100%;border-collapse:collapse;font-size:14px}th,td{text-align:left;p
 
 <section id="appView" class="hidden">
 <div class="topbar"><div><strong id="welcome">Bienvenue</strong><div class="badge" id="roleBadge">rôle</div></div><button id="logoutBtn" class="btn light">Déconnexion</button></div>
-<nav><button class="active" data-tab="dashboard">Tableau de bord</button><button data-tab="ledger">Livre de comptes</button><button data-tab="budget">Budget</button><button data-tab="bank">Rapprochement bancaire</button></nav>
+<nav><button class="active" data-tab="dashboard">Tableau de bord</button><button data-tab="ledger">Livre de comptes</button><button data-tab="budget">Budget</button><button data-tab="bank">Rapprochement bancaire</button><button id="usersTabBtn" class="hidden" data-tab="users">👥 Utilisateurs</button></nav>
 
 <div id="dashboard" class="tab">
 <div class="grid">
@@ -103,6 +103,16 @@ table{width:100%;border-collapse:collapse;font-size:14px}th,td{text-align:left;p
 <div class="row" style="margin-top:12px"><button id="bankImportBtn" class="btn primary">Importer le relevé</button><button id="bankClearBtn" class="btn light">Vider l’import</button></div>
 <div id="bankNotice" class="notice">Formats CSV courants acceptés. L’application essaie de reconnaître date, libellé, débit, crédit ou montant.</div></div>
 <div class="card"><div class="sectionTitle"><h2>Mouvements importés</h2><span id="bankSummary" class="badge">0 mouvement</span></div><div id="bankRows">Aucun relevé importé.</div></div>
+</div>
+
+
+<div id="users" class="tab hidden">
+<div class="card">
+  <div class="sectionTitle"><div><h2>👥 Utilisateurs & rôles</h2><small>Gestion réservée à l’administrateur.</small></div><button id="usersRefreshBtn" class="btn light">Actualiser</button></div>
+  <div class="notice">🔐 Admin : gestion complète · Trésorier : comptabilité, budget, rapprochement, justificatifs, historique, impressions et exports · Saisie : écritures et justificatifs · Lecture : consultation.</div>
+  <div id="usersList" style="margin-top:14px">Chargement…</div>
+  <div id="usersStatus" class="notice hidden"></div>
+</div>
 </div>
 
 <div id="entryCard" class="card hidden">
@@ -183,7 +193,7 @@ async function boot(){
  profile=p.data||{display_name:user.email.split("@")[0],role:"lecture"};fy=y.data;accounts=a.data||[];cats=c.data||[];knownProfiles=profile?.id?[profile]:[{id:user.id,display_name:profile.display_name||user.email.split("@")[0],role:profile.role}];
  $("welcome").textContent="Bienvenue "+(profile.display_name||user.email);$("roleBadge").textContent="Rôle : "+profile.role;$("headerUser").textContent=user.email;
  if(fy){$("exerciseHead").textContent="Exercice "+fy.label;$("period").textContent=`Du ${frDate(fy.start_date)} au ${frDate(fy.end_date)}`}
- fillAccounts();await loadEntries();renderAll();
+ fillAccounts();await loadEntries();renderAll();if(profile.role==="admin"){$("usersTabBtn").classList.remove("hidden");await loadUsers();}else{$("usersTabBtn").classList.add("hidden");}
 }
 function frDate(d){return d?new Date(d+"T12:00:00").toLocaleDateString("fr-FR"):""}
 async function loadEntries(){if(!fy)return;const {data,error}=await sb.from("entries").select("*").eq("fiscal_year_id",fy.id).order("entry_date",{ascending:false}).order("created_at",{ascending:false});if(error)console.error(error);entries=data||[];if(entries.length){const ar=await sb.from("attachments").select("*").in("entry_id",entries.map(e=>e.id)).order("created_at",{ascending:false});attachments=ar.data||[]}else attachments=[]}
@@ -369,12 +379,43 @@ function suggestBankMatches(){bankRows.forEach(r=>{let rd=isoGuess(r.date),c=ent
 function renderBank(){let ok=bankRows.filter(r=>r.status==="rapproche").length,maybe=bankRows.filter(r=>r.status==="probable").length;$("bankSummary").textContent=`${bankRows.length} mouvement${bankRows.length>1?"s":""} · ${ok} rapproché${ok>1?"s":""} · ${maybe} probable${maybe>1?"s":""}`;$("bankRows").innerHTML=bankRows.length?bankRows.map((r,i)=>{let e=entries.find(x=>x.id===r.match),cls=r.status==="rapproche"?"bank-ok":r.status==="probable"?"bank-maybe":"bank-no",lab=r.status==="rapproche"?"Rapproché":r.status==="probable"?"Correspondance probable":"Non rapproché";return `<article class="ledgerCard"><div class="ledgerCardTop"><div><strong>${esc(r.label)}</strong><br><small>${esc(r.date)}</small></div><div class="ledgerCardAmount ${r.amount>=0?"green":"red"}">${euro(r.amount)}</div></div><div style="margin-top:10px"><span class="bankStatus ${cls}">${lab}</span>${e?`<div class="ledgerMeta">↔ ${esc(e.piece_number)} · ${esc(e.label)} · ${euro(e.amount)}</div>`:""}</div><label style="margin-top:10px">Rattacher à une écriture</label><select class="bankMatch" data-i="${i}"><option value="">Aucune</option>${entries.map(x=>`<option value="${x.id}" ${x.id===r.match?"selected":""}>${esc(x.piece_number)} · ${esc(x.label)} · ${euro(x.amount)}</option>`).join("")}</select></article>`}).join(""):"Aucun relevé importé.";document.querySelectorAll(".bankMatch").forEach(s=>s.addEventListener("change",()=>{let r=bankRows[Number(s.dataset.i)];r.match=s.value||null;r.status=r.match?"rapproche":"non_rapproche";renderBank()}))}
 async function importBank(){let f=$("bankFile").files[0];if(!f)return;try{bankRows=parseBankCsv(await f.text());$("bankNotice").textContent="Relevé importé. Recherche des correspondances effectuée automatiquement ✅";$("bankNotice").className="notice ok";suggestBankMatches()}catch(e){$("bankNotice").textContent="Import impossible : "+e.message;$("bankNotice").className="notice err"}}
 
+
+async function loadUsers(){
+ if(profile?.role!=="admin")return;
+ $("usersList").innerHTML="Chargement…";
+ let {data,error}=await sb.from("profiles").select("id,display_name,role,created_at").order("created_at",{ascending:true});
+ if(error){$("usersList").innerHTML='<div class="notice err">Impossible de charger les utilisateurs : '+esc(error.message)+'</div>';return}
+ knownProfiles=data||[];
+ $("usersList").innerHTML=knownProfiles.length?knownProfiles.map(p=>`<article class="ledgerCard">
+   <div class="ledgerCardTop"><div><strong>👤 ${esc(p.display_name||"Utilisateur")}</strong><br><small>${p.id===user.id?"Ton compte":""}</small></div><span class="badge">${esc(p.role)}</span></div>
+   <label>Rôle</label>
+   <select class="userRoleSelect" data-id="${p.id}">
+     <option value="admin" ${p.role==="admin"?"selected":""}>Administrateur</option>
+     <option value="tresorier" ${p.role==="tresorier"?"selected":""}>Trésorier</option>
+     <option value="saisie" ${p.role==="saisie"?"selected":""}>Saisie</option>
+     <option value="lecture" ${p.role==="lecture"?"selected":""}>Lecture seule</option>
+   </select>
+   <button class="btn primary userRoleSave" data-id="${p.id}" style="margin-top:10px;width:100%">Enregistrer ce rôle</button>
+ </article>`).join(""):"Aucun utilisateur.";
+ document.querySelectorAll(".userRoleSave").forEach(b=>b.addEventListener("click",()=>saveUserRole(b.dataset.id)));
+}
+async function saveUserRole(id){
+ if(profile?.role!=="admin")return;
+ let sel=document.querySelector(`.userRoleSelect[data-id="${id}"]`);if(!sel)return;
+ if(id===user.id && sel.value!=="admin"){alert("Par sécurité, tu ne peux pas retirer ton propre rôle Administrateur depuis l’application.");sel.value="admin";return}
+ $("usersStatus").textContent="Enregistrement du rôle…";$("usersStatus").className="notice";
+ let {error}=await sb.from("profiles").update({role:sel.value}).eq("id",id);
+ if(error){$("usersStatus").textContent="Erreur : "+error.message;$("usersStatus").className="notice err";return}
+ $("usersStatus").textContent="Rôle enregistré ✅";$("usersStatus").className="notice ok";
+ await loadUsers();
+}
+
 function csv(){let rows=[["Pièce","Date","Type","Libellé","Tiers","Catégorie","Compte","Montant","Statut"],...entries.map(e=>[e.piece_number,e.entry_date,e.type,e.label,e.third_party||"",catName(e.category_id),accName(e.account_id),e.amount,e.status])];let s=rows.map(r=>r.map(v=>'"'+String(v).replaceAll('"','""')+'"').join(";")).join("\n"),blob=new Blob(["\ufeff"+s],{type:"text/csv;charset=utf-8"}),a=document.createElement("a");a.href=URL.createObjectURL(blob);a.download="livre-comptes-"+(fy?.label||"RCSQ")+".csv";a.click();setTimeout(()=>URL.revokeObjectURL(a.href),1000)}
 function esc(s){return String(s??"").replace(/[&<>"']/g,m=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[m]))}
 $("togglePassword").addEventListener("click",togglePassword);$("forgotPassword").addEventListener("click",forgotPassword);$("loginBtn").addEventListener("click",login);$("signupBtn").addEventListener("click",signup);$("logoutBtn").addEventListener("click",async()=>{await sb.auth.signOut();location.reload()});
 document.querySelectorAll("nav button").forEach(b=>b.addEventListener("click",()=>showTab(b.dataset.tab)));document.querySelectorAll(".newEntry").forEach(b=>b.addEventListener("click",()=>openEntry(b.dataset.type)));
 document.querySelector(".gotoLedger").addEventListener("click",()=>showTab("ledger"));document.querySelector(".gotoBudget").addEventListener("click",()=>showTab("budget"));$("closeEntry").addEventListener("click",()=> $("entryCard").classList.add("hidden"));
-$("draftBtn").addEventListener("click",()=>saveEntry("brouillon"));$("validateBtn").addEventListener("click",()=>saveEntry("validee"));$("refreshBtn").addEventListener("click",async()=>{await loadEntries();renderAll()});$("csvBtn").addEventListener("click",csv);$("budgetEditClose").addEventListener("click",()=>$("budgetEdit").classList.add("hidden"));$("budgetEditSave").addEventListener("click",saveBudgetEdit);$("receiptClose").addEventListener("click",()=>$("receiptCard").classList.add("hidden"));$("receiptSave").addEventListener("click",saveReceipt);$("editEntryClose").addEventListener("click",()=>$("editEntryCard").classList.add("hidden"));$("editEntrySave").addEventListener("click",saveEntryEdit);$("bankImportBtn").addEventListener("click",importBank);$("bankClearBtn").addEventListener("click",()=>{bankRows=[];$("bankFile").value="";$("bankNotice").textContent="Import vidé.";$("bankNotice").className="notice";renderBank()});
+$("draftBtn").addEventListener("click",()=>saveEntry("brouillon"));$("validateBtn").addEventListener("click",()=>saveEntry("validee"));$("refreshBtn").addEventListener("click",async()=>{await loadEntries();renderAll()});$("csvBtn").addEventListener("click",csv);$("budgetEditClose").addEventListener("click",()=>$("budgetEdit").classList.add("hidden"));$("budgetEditSave").addEventListener("click",saveBudgetEdit);$("receiptClose").addEventListener("click",()=>$("receiptCard").classList.add("hidden"));$("receiptSave").addEventListener("click",saveReceipt);$("editEntryClose").addEventListener("click",()=>$("editEntryCard").classList.add("hidden"));$("editEntrySave").addEventListener("click",saveEntryEdit);$("usersRefreshBtn").addEventListener("click",loadUsers);$("bankImportBtn").addEventListener("click",importBank);$("bankClearBtn").addEventListener("click",()=>{bankRows=[];$("bankFile").value="";$("bankNotice").textContent="Import vidé.";$("bankNotice").className="notice";renderBank()});
 sb.auth.onAuthStateChange((event,session)=>{if(event==="SIGNED_IN"&&session&&!user){user=session.user;setTimeout(boot,0)}});
 boot();
 })();
