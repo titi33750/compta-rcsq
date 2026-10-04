@@ -98,10 +98,16 @@ table{width:100%;border-collapse:collapse;font-size:14px}th,td{text-align:left;p
 </div>
 
 <div id="bank" class="tab hidden">
-<div class="card"><div class="sectionTitle"><div><h2>🏦 Rapprochement bancaire</h2><small>Importe un relevé CSV et rattache chaque mouvement à une écriture.</small></div></div>
-<label>Relevé bancaire CSV</label><input id="bankFile" type="file" accept=".csv,text/csv">
+<div class="card"><div class="sectionTitle"><div><h2>🏦 Rapprochement bancaire</h2><small>Importe un relevé CSV ou PDF et rattache chaque mouvement à une écriture.</small></div></div>
+<label>Relevé bancaire CSV / PDF</label><input id="bankFile" type="file" accept=".csv,text/csv,.pdf,application/pdf">
 <div class="row" style="margin-top:12px"><button id="bankImportBtn" class="btn primary">Importer le relevé</button><button id="bankClearBtn" class="btn light">Vider l’import</button></div>
-<div id="bankNotice" class="notice">Formats CSV courants acceptés. L’application essaie de reconnaître date, libellé, débit, crédit ou montant.</div></div>
+<div id="bankNotice" class="notice">CSV : import direct. PDF : lecture locale du relevé dans ton navigateur, sans envoi vers GitHub.</div>
+<div id="bankControl" class="grid" style="margin-top:14px">
+ <div class="stat"><span>Solde précédent</span><strong id="bankOpening">—</strong></div>
+ <div class="stat"><span>Total débits</span><strong id="bankDebits" class="red">0,00 €</strong></div>
+ <div class="stat"><span>Total crédits</span><strong id="bankCredits" class="green">0,00 €</strong></div>
+ <div class="stat"><span>Solde final</span><strong id="bankClosing">—</strong></div>
+</div></div>
 <div class="card"><div class="sectionTitle"><h2>Mouvements importés</h2><span id="bankSummary" class="badge">0 mouvement</span></div><div id="bankRows">Aucun relevé importé.</div></div>
 </div>
 
@@ -155,11 +161,16 @@ table{width:100%;border-collapse:collapse;font-size:14px}th,td{text-align:left;p
 </main>
 
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script type="module">
+import * as pdfjsLib from "https://cdn.jsdelivr.net/npm/pdfjs-dist@4.10.38/build/pdf.min.mjs";
+pdfjsLib.GlobalWorkerOptions.workerSrc="https://cdn.jsdelivr.net/npm/pdfjs-dist@4.10.38/build/pdf.worker.min.mjs";
+window.pdfjsLib=pdfjsLib;
+</script>
 <script>
 (function(){
 const URL="https://wrrwanpgvqozesdcqozl.supabase.co", KEY="sb_publishable_616PWlfFWgNPkfnhwnsRDw_qmzbvo-Q";
 const $=id=>document.getElementById(id), euro=n=>new Intl.NumberFormat("fr-FR",{style:"currency",currency:"EUR"}).format(Number(n||0));
-let sb=null,user=null,profile=null,fy=null,accounts=[],cats=[],entries=[],attachments=[],knownProfiles=[],entryType="depense",bankRows=[];
+let sb=null,user=null,profile=null,fy=null,accounts=[],cats=[],entries=[],attachments=[],knownProfiles=[],entryType="depense",bankRows=[],bankMeta={opening:null,closing:null,debits:0,credits:0};
 function authMsg(m,k){$("authStatus").textContent=m;$("authStatus").className=k||""}
 if(!window.supabase?.createClient){authMsg("ERREUR : Supabase ne s'est pas chargé.","err");return}
 sb=window.supabase.createClient(URL,KEY);authMsg("Supabase chargé ✅","ok");
@@ -373,11 +384,52 @@ async function saveReceipt(){
 function parseCsvLine(line,sep){let out=[],cur="",q=false;for(let i=0;i<line.length;i++){let c=line[i];if(c==='"'){if(q&&line[i+1]==='"'){cur+='"';i++}else q=!q}else if(c===sep&&!q){out.push(cur.trim());cur=""}else cur+=c}out.push(cur.trim());return out}
 function parseMoney(v){if(v==null)return 0;let x=String(v).replace(/\s/g,"").replace(/€/g,"").replace(/\.(?=\d{3}(?:\D|$))/g,"").replace(",",".").replace(/[^0-9+\-.]/g,"");let n=Number(x);return Number.isFinite(n)?n:0}
 function norm(s){return String(s||"").normalize("NFD").replace(/[\u0300-\u036f]/g,"").toLowerCase().trim()}
-function parseBankCsv(text){let lines=text.replace(/^\uFEFF/,"").split(/\r?\n/).filter(x=>x.trim());if(lines.length<2)throw new Error("Le fichier CSV semble vide.");let sep=(lines[0].match(/;/g)||[]).length>=(lines[0].match(/,/g)||[]).length?";":",";let head=parseCsvLine(lines[0],sep).map(norm);let idx=(names)=>head.findIndex(h=>names.some(n=>h.includes(n)));let di=idx(["date"]),li=idx(["libelle","description","operation","intitule"]),mi=idx(["montant","amount"]),debi=idx(["debit"]),cri=idx(["credit"]);if(di<0||li<0||(mi<0&&debi<0&&cri<0))throw new Error("Colonnes non reconnues. Il faut au minimum Date, Libellé et Montant, ou Débit/Crédit.");return lines.slice(1).map((l,n)=>{let r=parseCsvLine(l,sep),amount=mi>=0?parseMoney(r[mi]):parseMoney(r[cri])-Math.abs(parseMoney(r[debi]));return{id:"b"+n,date:r[di]||"",label:r[li]||"",amount,match:null,status:"non_rapproche"}}).filter(r=>r.date||r.label||r.amount)}
+function parseBankCsv(text){let lines=text.replace(/^\uFEFF/,"").split(/\r?\n/).filter(x=>x.trim());if(lines.length<2)throw new Error("Le fichier CSV semble vide.");let sep=(lines[0].match(/;/g)||[]).length>=(lines[0].match(/,/g)||[]).length?";":",";let head=parseCsvLine(lines[0],sep).map(norm);let idx=(names)=>head.findIndex(h=>names.some(n=>h.includes(n)));let di=idx(["date"]),li=idx(["libelle","description","operation","intitule"]),mi=idx(["montant","amount"]),debi=idx(["debit"]),cri=idx(["credit"]);if(di<0||li<0||(mi<0&&debi<0&&cri<0))throw new Error("Colonnes non reconnues. Il faut au minimum Date, Libellé et Montant, ou Débit/Crédit.");let rows=lines.slice(1).map((l,n)=>{let r=parseCsvLine(l,sep),amount=mi>=0?parseMoney(r[mi]):parseMoney(r[cri])-Math.abs(parseMoney(r[debi]));return{id:"b"+n,date:r[di]||"",label:r[li]||"",amount,match:null,status:"non_rapproche"}}).filter(r=>r.date||r.label||r.amount);bankMeta={opening:null,closing:null,debits:rows.filter(x=>x.amount<0).reduce((a,x)=>a+Math.abs(x.amount),0),credits:rows.filter(x=>x.amount>0).reduce((a,x)=>a+x.amount,0)};return rows}
 function isoGuess(d){let m=String(d).match(/(\d{1,2})[\/.-](\d{1,2})[\/.-](\d{2,4})/);if(!m)return String(d).slice(0,10);let y=m[3].length===2?"20"+m[3]:m[3];return `${y}-${m[2].padStart(2,"0")}-${m[1].padStart(2,"0")}`}
+async function extractPdfText(file){
+ if(!window.pdfjsLib) throw new Error("Le lecteur PDF n’est pas encore chargé. Réessaie dans quelques secondes.");
+ let data=new Uint8Array(await file.arrayBuffer()),pdf=await window.pdfjsLib.getDocument({data}).promise,pages=[];
+ for(let p=1;p<=pdf.numPages;p++){let page=await pdf.getPage(p),tc=await page.getTextContent(),items=tc.items.map(x=>({s:x.str,x:x.transform[4],y:x.transform[5]})).filter(x=>x.s.trim());items.sort((a,b)=>Math.abs(b.y-a.y)>2?b.y-a.y:a.x-b.x);let lines=[];for(let it of items){let line=lines.find(l=>Math.abs(l.y-it.y)<2);if(!line){line={y:it.y,a:[]};lines.push(line)}line.a.push(it)}pages.push(lines.map(l=>l.a.sort((a,b)=>a.x-b.x).map(i=>i.s).join(" ")).join("\n"))}
+ return pages.join("\n");
+}
+function parseSgPdfText(text){
+ let t=text.replace(/\u00a0/g," ").replace(/[ \t]+/g," "),lines=t.split(/\r?\n/).map(x=>x.trim()).filter(Boolean);
+ let money=s=>{let m=String(s).match(/([+-]?\s?\d{1,3}(?:[ .]\d{3})*,\d{2}|[+-]?\s?\d+,\d{2})\s*\*?\s*$/);return m?parseMoney(m[1]):null};
+ let openingLine=lines.find(x=>/SOLDE PR[ÉE]C[ÉE]DENT/i.test(x)),closingLine=lines.find(x=>/NOUVEAU SOLDE/i.test(x)),totLine=lines.find(x=>/TOTAUX DES MOUVEMENTS/i.test(x));
+ let opening=openingLine?money(openingLine):null,closing=closingLine?money(closingLine):null;
+ let totals=totLine?totLine.match(/(\d{1,3}(?:[ .]\d{3})*,\d{2}|\d+,\d{2})/g):null;
+ bankMeta={opening,closing,debits:totals?.length>=2?parseMoney(totals[totals.length-2]):0,credits:totals?.length>=2?parseMoney(totals[totals.length-1]):0};
+ let rows=[],current=null,rx=/^(\d{2}\/\d{2}\/\d{4})\s+(\d{2}\/\d{2}\/\d{4})\s+(.+)$/;
+ for(let line of lines){
+   if(/^(Date Valeur|RELEV[ÉE] DE COMPTE|COMPTE D.ADMINISTRATION|suite >>>|N° ADEME|Société Générale|S\.A\. au capital|envoi n°|TOTAUX DES MOUVEMENTS|NOUVEAU SOLDE|SOLDE PR[ÉE]C[ÉE]DENT)/i.test(line))continue;
+   let m=line.match(rx);
+   if(m){if(current)rows.push(current);current={id:"p"+rows.length,date:m[1],label:m[3],parts:[m[3]],amount:null,match:null,status:"non_rapproche"};let val=money(m[3]);if(val!==null){current.amount=val;current.parts=[m[3].replace(/([+-]?\s?\d{1,3}(?:[ .]\d{3})*,\d{2}|[+-]?\s?\d+,\d{2})\s*\*?\s*$/,"").trim()]};continue}
+   if(current){let val=money(line);if(val!==null&&current.amount===null){current.amount=val;let clean=line.replace(/([+-]?\s?\d{1,3}(?:[ .]\d{3})*,\d{2}|[+-]?\s?\d+,\d{2})\s*\*?\s*$/,"").trim();if(clean)current.parts.push(clean)}else current.parts.push(line)}
+ }
+ if(current)rows.push(current);
+ rows=rows.filter(r=>r.amount!==null&&r.amount!==0).map(r=>{let lab=r.parts.join(" · ");let upper=norm(lab);let credit=/\bvir (inst )?re\b|\bvir recu\b|\bstripe\b|\bsumup\b/.test(upper);r.amount=credit?Math.abs(r.amount):-Math.abs(r.amount);r.label=lab;delete r.parts;return r});
+ if(!rows.length)throw new Error("Aucun mouvement bancaire n’a été reconnu dans ce PDF.");
+ return rows;
+}
 function suggestBankMatches(){bankRows.forEach(r=>{let rd=isoGuess(r.date),c=entries.map(e=>{let expected=e.type==="recette"?Number(e.amount):-Number(e.amount),diff=Math.abs(expected-r.amount),days=Math.abs((new Date(e.entry_date)-new Date(rd))/86400000),score=(diff<0.01?100:diff<1?60:0)+(days===0?40:days<=3?20:0)+(norm(r.label).includes(norm(e.label).slice(0,8))?20:0);return{e,score}}).filter(x=>x.score>=80).sort((a,b)=>b.score-a.score);if(c.length){r.match=c[0].e.id;r.status=c[0].score>=120?"rapproche":"probable"}});renderBank()}
-function renderBank(){let ok=bankRows.filter(r=>r.status==="rapproche").length,maybe=bankRows.filter(r=>r.status==="probable").length;$("bankSummary").textContent=`${bankRows.length} mouvement${bankRows.length>1?"s":""} · ${ok} rapproché${ok>1?"s":""} · ${maybe} probable${maybe>1?"s":""}`;$("bankRows").innerHTML=bankRows.length?bankRows.map((r,i)=>{let e=entries.find(x=>x.id===r.match),cls=r.status==="rapproche"?"bank-ok":r.status==="probable"?"bank-maybe":"bank-no",lab=r.status==="rapproche"?"Rapproché":r.status==="probable"?"Correspondance probable":"Non rapproché";return `<article class="ledgerCard"><div class="ledgerCardTop"><div><strong>${esc(r.label)}</strong><br><small>${esc(r.date)}</small></div><div class="ledgerCardAmount ${r.amount>=0?"green":"red"}">${euro(r.amount)}</div></div><div style="margin-top:10px"><span class="bankStatus ${cls}">${lab}</span>${e?`<div class="ledgerMeta">↔ ${esc(e.piece_number)} · ${esc(e.label)} · ${euro(e.amount)}</div>`:""}</div><label style="margin-top:10px">Rattacher à une écriture</label><select class="bankMatch" data-i="${i}"><option value="">Aucune</option>${entries.map(x=>`<option value="${x.id}" ${x.id===r.match?"selected":""}>${esc(x.piece_number)} · ${esc(x.label)} · ${euro(x.amount)}</option>`).join("")}</select></article>`}).join(""):"Aucun relevé importé.";document.querySelectorAll(".bankMatch").forEach(s=>s.addEventListener("change",()=>{let r=bankRows[Number(s.dataset.i)];r.match=s.value||null;r.status=r.match?"rapproche":"non_rapproche";renderBank()}))}
-async function importBank(){let f=$("bankFile").files[0];if(!f)return;try{bankRows=parseBankCsv(await f.text());$("bankNotice").textContent="Relevé importé. Recherche des correspondances effectuée automatiquement ✅";$("bankNotice").className="notice ok";suggestBankMatches()}catch(e){$("bankNotice").textContent="Import impossible : "+e.message;$("bankNotice").className="notice err"}}
+function renderBank(){
+ let ok=bankRows.filter(r=>r.status==="rapproche").length,maybe=bankRows.filter(r=>r.status==="probable").length;
+ $("bankSummary").textContent=`${bankRows.length} mouvement${bankRows.length>1?"s":""} · ${ok} rapproché${ok>1?"s":""} · ${maybe} probable${maybe>1?"s":""}`;
+ $("bankOpening").textContent=bankMeta.opening==null?"—":euro(bankMeta.opening);$("bankDebits").textContent=euro(bankMeta.debits);$("bankCredits").textContent=euro(bankMeta.credits);$("bankClosing").textContent=bankMeta.closing==null?"—":euro(bankMeta.closing);
+ $("bankRows").innerHTML=bankRows.length?bankRows.map((r,i)=>{let e=entries.find(x=>x.id===r.match),cls=r.status==="rapproche"?"bank-ok":r.status==="probable"?"bank-maybe":"bank-no",lab=r.status==="rapproche"?"Rapproché":r.status==="probable"?"À vérifier":"Non rapproché";return `<article class="ledgerCard"><div class="ledgerCardTop"><div><strong>${esc(r.label)}</strong><br><small>${esc(r.date)}</small></div><div class="ledgerCardAmount ${r.amount>=0?"green":"red"}">${r.amount>=0?"+ ":"− "}${euro(Math.abs(r.amount))}</div></div><div style="margin-top:10px"><span class="bankStatus ${cls}">${lab}</span>${e?`<div class="ledgerMeta">↔ ${esc(e.piece_number)} · ${esc(e.label)} · ${euro(e.amount)}</div>`:""}</div><label style="margin-top:10px">Rattacher à une écriture</label><select class="bankMatch" data-i="${i}"><option value="">Aucune</option>${entries.map(x=>`<option value="${x.id}" ${x.id===r.match?"selected":""}>${esc(x.piece_number)} · ${esc(x.label)} · ${euro(x.amount)}</option>`).join("")}</select>${!r.match&&["admin","tresorier","saisie"].includes(profile.role)?`<button class="btn primary bankCreate" data-i="${i}" style="margin-top:10px;width:100%">＋ Créer l’écriture</button>`:""}</article>`}).join(""):"Aucun relevé importé.";
+ document.querySelectorAll(".bankMatch").forEach(s=>s.addEventListener("change",()=>{let r=bankRows[Number(s.dataset.i)];r.match=s.value||null;r.status=r.match?"rapproche":"non_rapproche";renderBank()}));
+ document.querySelectorAll(".bankCreate").forEach(b=>b.addEventListener("click",()=>createFromBank(Number(b.dataset.i))));
+}
+function createFromBank(i){let r=bankRows[i];if(!r)return;openEntry(r.amount>=0?"recette":"depense");$("entryDate").value=isoGuess(r.date);$("entryAmount").value=Math.abs(r.amount).toFixed(2);$("entryLabel").value=r.label.slice(0,180);$("entryPayment").value=/prelevement/i.test(r.label)?"Prélèvement":/carte/i.test(r.label)?"Carte bancaire":"Virement";$("entryNotes").value="Créée depuis le rapprochement bancaire.";bankRows[i].status="non_rapproche"}
+async function importBank(){
+ let f=$("bankFile").files[0];if(!f)return;
+ try{
+   $("bankNotice").textContent="Lecture du relevé…";$("bankNotice").className="notice";
+   if(/pdf/i.test(f.type)||/\.pdf$/i.test(f.name)){bankRows=parseSgPdfText(await extractPdfText(f))}
+   else bankRows=parseBankCsv(await f.text());
+   $("bankNotice").textContent=`Relevé importé : ${bankRows.length} mouvement(s). Recherche des correspondances effectuée automatiquement ✅`;$("bankNotice").className="notice ok";suggestBankMatches()
+ }catch(e){$("bankNotice").textContent="Import impossible : "+e.message;$("bankNotice").className="notice err"}
+}
 
 
 async function loadUsers(){
@@ -415,7 +467,7 @@ function esc(s){return String(s??"").replace(/[&<>"']/g,m=>({"&":"&amp;","<":"&l
 $("togglePassword").addEventListener("click",togglePassword);$("forgotPassword").addEventListener("click",forgotPassword);$("loginBtn").addEventListener("click",login);$("signupBtn").addEventListener("click",signup);$("logoutBtn").addEventListener("click",async()=>{await sb.auth.signOut();location.reload()});
 document.querySelectorAll("nav button").forEach(b=>b.addEventListener("click",()=>showTab(b.dataset.tab)));document.querySelectorAll(".newEntry").forEach(b=>b.addEventListener("click",()=>openEntry(b.dataset.type)));
 document.querySelector(".gotoLedger").addEventListener("click",()=>showTab("ledger"));document.querySelector(".gotoBudget").addEventListener("click",()=>showTab("budget"));$("closeEntry").addEventListener("click",()=> $("entryCard").classList.add("hidden"));
-$("draftBtn").addEventListener("click",()=>saveEntry("brouillon"));$("validateBtn").addEventListener("click",()=>saveEntry("validee"));$("refreshBtn").addEventListener("click",async()=>{await loadEntries();renderAll()});$("csvBtn").addEventListener("click",csv);$("budgetEditClose").addEventListener("click",()=>$("budgetEdit").classList.add("hidden"));$("budgetEditSave").addEventListener("click",saveBudgetEdit);$("receiptClose").addEventListener("click",()=>$("receiptCard").classList.add("hidden"));$("receiptSave").addEventListener("click",saveReceipt);$("editEntryClose").addEventListener("click",()=>$("editEntryCard").classList.add("hidden"));$("editEntrySave").addEventListener("click",saveEntryEdit);$("usersRefreshBtn").addEventListener("click",loadUsers);$("bankImportBtn").addEventListener("click",importBank);$("bankClearBtn").addEventListener("click",()=>{bankRows=[];$("bankFile").value="";$("bankNotice").textContent="Import vidé.";$("bankNotice").className="notice";renderBank()});
+$("draftBtn").addEventListener("click",()=>saveEntry("brouillon"));$("validateBtn").addEventListener("click",()=>saveEntry("validee"));$("refreshBtn").addEventListener("click",async()=>{await loadEntries();renderAll()});$("csvBtn").addEventListener("click",csv);$("budgetEditClose").addEventListener("click",()=>$("budgetEdit").classList.add("hidden"));$("budgetEditSave").addEventListener("click",saveBudgetEdit);$("receiptClose").addEventListener("click",()=>$("receiptCard").classList.add("hidden"));$("receiptSave").addEventListener("click",saveReceipt);$("editEntryClose").addEventListener("click",()=>$("editEntryCard").classList.add("hidden"));$("editEntrySave").addEventListener("click",saveEntryEdit);$("usersRefreshBtn").addEventListener("click",loadUsers);$("bankImportBtn").addEventListener("click",importBank);$("bankClearBtn").addEventListener("click",()=>{bankRows=[];bankMeta={opening:null,closing:null,debits:0,credits:0};$("bankFile").value="";$("bankNotice").textContent="Import vidé.";$("bankNotice").className="notice";renderBank()});
 sb.auth.onAuthStateChange((event,session)=>{if(event==="SIGNED_IN"&&session&&!user){user=session.user;setTimeout(boot,0)}});
 boot();
 })();
