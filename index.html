@@ -175,7 +175,7 @@ window.pdfjsLib=pdfjsLib;
 (function(){
 const URL="https://wrrwanpgvqozesdcqozl.supabase.co", KEY="sb_publishable_616PWlfFWgNPkfnhwnsRDw_qmzbvo-Q";
 const $=id=>document.getElementById(id), euro=n=>new Intl.NumberFormat("fr-FR",{style:"currency",currency:"EUR"}).format(Number(n||0));
-let sb=null,user=null,profile=null,fy=null,accounts=[],cats=[],entries=[],attachments=[],knownProfiles=[],entryType="depense",bankRows=[],bankMeta={opening:null,closing:null,debits:0,credits:0},bankStatementId=null,bankStatements=[];
+let sb=null,user=null,profile=null,fy=null,accounts=[],cats=[],entries=[],attachments=[],knownProfiles=[],entryType="depense",bankRows=[],bankMeta={opening:null,closing:null,debits:0,credits:0},bankStatementId=null,bankStatements=[],pendingBankIndex=null;
 function authMsg(m,k){$("authStatus").textContent=m;$("authStatus").className=k||""}
 if(!window.supabase?.createClient){authMsg("ERREUR : Supabase ne s'est pas chargé.","err");return}
 sb=window.supabase.createClient(URL,KEY);authMsg("Supabase chargé ✅","ok");
@@ -302,9 +302,20 @@ async function saveEntry(status){
  let payload={fiscal_year_id:fy.id,piece_number:piece,entry_date:$("entryDate").value,type:entryType,label,third_party:$("entryThird").value.trim()||null,category_id:$("entryCategory").value||null,account_id:$("entryAccount").value||null,payment_method:$("entryPayment").value||null,amount,notes:$("entryNotes").value.trim()||null,status,created_by:user.id};
  entryMsg("Enregistrement…");
  const {data,error}=await sb.from("entries").insert(payload).select().single();if(error)return entryMsg("Erreur : "+error.message,"err");
+ if(pendingBankIndex!==null){
+   let bi=pendingBankIndex,br=bankRows[bi];
+   if(br){
+     br.match=data.id;br.status="rapproche";
+     if(bankStatementId&&br.id){
+       let {error:be}=await sb.from("bank_transactions").update({matched_entry_id:data.id,reconciliation_status:"rapproche",reconciled_by:user.id,reconciled_at:new Date().toISOString()}).eq("id",br.id).is("matched_entry_id",null);
+       if(be){entryMsg("Écriture créée, mais rapprochement bancaire à vérifier : "+be.message,"err");}
+     }
+   }
+   pendingBankIndex=null;
+ }
  const file=$("entryFile").files[0];
  if(file){let safe=file.name.replace(/[^a-zA-Z0-9._-]/g,"_"),path=`${fy.label}/${data.id}/${Date.now()}-${safe}`;let up=await sb.storage.from("justificatifs").upload(path,file);if(up.error)return entryMsg("Opération enregistrée, mais justificatif non envoyé : "+up.error.message,"err");let ar=await sb.from("attachments").insert({entry_id:data.id,storage_path:path,original_name:file.name,mime_type:file.type||null,size_bytes:file.size,uploaded_by:user.id});if(ar.error)return entryMsg("Opération enregistrée, justificatif envoyé, mais indexation impossible : "+ar.error.message,"err")}
- entryMsg(status==="validee"?"Opération validée ✅":"Brouillon enregistré ✅","ok");$("entryAmount").value="";$("entryLabel").value="";$("entryThird").value="";$("entryNotes").value="";$("entryFile").value="";await loadEntries();renderAll();
+ entryMsg(status==="validee"?"Opération validée ✅":"Brouillon enregistré ✅","ok");$("entryAmount").value="";$("entryLabel").value="";$("entryThird").value="";$("entryNotes").value="";$("entryFile").value="";await loadEntries();renderAll();renderBank();
 }
 function entryMsg(m,k){$("entryStatus").textContent=m;$("entryStatus").className="notice "+(k||"");$("entryStatus").classList.remove("hidden")}
 function showTab(id){document.querySelectorAll(".tab").forEach(x=>x.classList.add("hidden"));$(id).classList.remove("hidden");document.querySelectorAll("nav button").forEach(x=>x.classList.toggle("active",x.dataset.tab===id))}
@@ -421,11 +432,23 @@ function renderBank(){
  let ok=bankRows.filter(r=>r.status==="rapproche").length,maybe=bankRows.filter(r=>r.status==="probable").length;
  $("bankSummary").textContent=`${bankRows.length} mouvement${bankRows.length>1?"s":""} · ${ok} rapproché${ok>1?"s":""} · ${maybe} probable${maybe>1?"s":""}`;
  $("bankOpening").textContent=bankMeta.opening==null?"—":euro(bankMeta.opening);$("bankDebits").textContent=euro(bankMeta.debits);$("bankCredits").textContent=euro(bankMeta.credits);$("bankClosing").textContent=bankMeta.closing==null?"—":euro(bankMeta.closing);
- $("bankRows").innerHTML=bankRows.length?bankRows.map((r,i)=>{let e=entries.find(x=>x.id===r.match),cls=r.status==="rapproche"?"bank-ok":r.status==="probable"?"bank-maybe":"bank-no",lab=r.status==="rapproche"?"Rapproché":r.status==="probable"?"À vérifier":"Non rapproché";return `<article class="ledgerCard"><div class="ledgerCardTop"><div><strong>${esc(r.label)}</strong><br><small>${esc(r.date)}</small></div><div class="ledgerCardAmount ${r.amount>=0?"green":"red"}">${r.amount>=0?"+ ":"− "}${euro(Math.abs(r.amount))}</div></div><div style="margin-top:10px"><span class="bankStatus ${cls}">${lab}</span>${e?`<div class="ledgerMeta">↔ ${esc(e.piece_number)} · ${esc(e.label)} · ${euro(e.amount)}</div>`:""}</div><label style="margin-top:10px">Rattacher à une écriture</label><select class="bankMatch" data-i="${i}"><option value="">Aucune</option>${entries.map(x=>`<option value="${x.id}" ${x.id===r.match?"selected":""}>${esc(x.piece_number)} · ${esc(x.label)} · ${euro(x.amount)}</option>`).join("")}</select>${!r.match&&["admin","tresorier","saisie"].includes(profile.role)?`<button class="btn primary bankCreate" data-i="${i}" style="margin-top:10px;width:100%">＋ Créer l’écriture</button>`:""}</article>`}).join(""):"Aucun relevé importé.";
+ $("bankRows").innerHTML=bankRows.length?bankRows.map((r,i)=>{let e=entries.find(x=>x.id===r.match),cls=r.status==="rapproche"?"bank-ok":r.status==="probable"?"bank-maybe":"bank-no",lab=r.status==="rapproche"?"Rapproché":r.status==="probable"?"À vérifier":"Non rapproché";return `<article class="ledgerCard"><div class="ledgerCardTop"><div><strong>${esc(r.label)}</strong><br><small>${esc(r.date)}</small></div><div class="ledgerCardAmount ${r.amount>=0?"green":"red"}">${r.amount>=0?"+ ":"− "}${euro(Math.abs(r.amount))}</div></div><div style="margin-top:10px"><span class="bankStatus ${cls}">${lab}</span>${e?`<div class="ledgerMeta">↔ ${esc(e.piece_number)} · ${esc(e.label)} · ${euro(e.amount)}</div>`:""}</div><label style="margin-top:10px">Rattacher à une écriture</label><select class="bankMatch" data-i="${i}"><option value="">Aucune</option>${entries.map(x=>`<option value="${x.id}" ${x.id===r.match?"selected":""}>${esc(x.piece_number)} · ${esc(x.label)} · ${euro(x.amount)}</option>`).join("")}</select>${!r.match&&["admin","tresorier"].includes(profile.role)?`<button class="btn primary bankCreate" data-i="${i}" style="margin-top:10px;width:100%">＋ Créer l’écriture</button>`:""}</article>`}).join(""):"Aucun relevé importé.";
  document.querySelectorAll(".bankMatch").forEach(s=>s.addEventListener("change",async()=>{let i=Number(s.dataset.i),r=bankRows[i];r.match=s.value||null;r.status=r.match?"rapproche":"non_rapproche";if(bankStatementId)await persistBankMatch(i);renderBank()}));
  document.querySelectorAll(".bankCreate").forEach(b=>b.addEventListener("click",()=>createFromBank(Number(b.dataset.i))));
 }
-function createFromBank(i){let r=bankRows[i];if(!r)return;openEntry(r.amount>=0?"recette":"depense");$("entryDate").value=isoGuess(r.date);$("entryAmount").value=Math.abs(r.amount).toFixed(2);$("entryLabel").value=r.label.slice(0,180);$("entryPayment").value=/prelevement/i.test(r.label)?"Prélèvement":/carte/i.test(r.label)?"Carte bancaire":"Virement";$("entryNotes").value="Créée depuis le rapprochement bancaire.";bankRows[i].status="non_rapproche"}
+function createFromBank(i){
+ let r=bankRows[i];if(!r)return;
+ if(r.match){alert("Ce mouvement est déjà rattaché à une écriture. Aucune nouvelle écriture ne sera créée.");return}
+ if(pendingBankIndex!==null&&pendingBankIndex!==i){alert("Une création depuis un autre mouvement bancaire est déjà en cours. Termine-la ou ferme la saisie avant d’en ouvrir une autre.");return}
+ pendingBankIndex=i;
+ openEntry(r.amount>=0?"recette":"depense");
+ $("entryDate").value=isoGuess(r.date);
+ $("entryAmount").value=Math.abs(r.amount).toFixed(2);
+ $("entryLabel").value=r.label.slice(0,180);
+ $("entryPayment").value=/prelevement/i.test(r.label)?"Prélèvement":/carte/i.test(r.label)?"Carte bancaire":"Virement";
+ $("entryNotes").value="Créée depuis le rapprochement bancaire.";
+ entryMsg("🏦 Écriture préparée depuis un mouvement bancaire. À la validation, le rapprochement sera automatique.","ok");
+}
 async function importBank(){
  let f=$("bankFile").files[0];if(!f)return;
  try{
