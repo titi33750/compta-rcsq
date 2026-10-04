@@ -401,7 +401,7 @@ function parseCsvLine(line,sep){let out=[],cur="",q=false;for(let i=0;i<line.len
 function parseMoney(v){if(v==null)return 0;let x=String(v).replace(/\s/g,"").replace(/€/g,"").replace(/\.(?=\d{3}(?:\D|$))/g,"").replace(",",".").replace(/[^0-9+\-.]/g,"");let n=Number(x);return Number.isFinite(n)?n:0}
 function norm(s){return String(s||"").normalize("NFD").replace(/[\u0300-\u036f]/g,"").toLowerCase().trim()}
 function parseBankCsv(text){let lines=text.replace(/^\uFEFF/,"").split(/\r?\n/).filter(x=>x.trim());if(lines.length<2)throw new Error("Le fichier CSV semble vide.");let sep=(lines[0].match(/;/g)||[]).length>=(lines[0].match(/,/g)||[]).length?";":",";let head=parseCsvLine(lines[0],sep).map(norm);let idx=(names)=>head.findIndex(h=>names.some(n=>h.includes(n)));let di=idx(["date"]),li=idx(["libelle","description","operation","intitule"]),mi=idx(["montant","amount"]),debi=idx(["debit"]),cri=idx(["credit"]);if(di<0||li<0||(mi<0&&debi<0&&cri<0))throw new Error("Colonnes non reconnues. Il faut au minimum Date, Libellé et Montant, ou Débit/Crédit.");let rows=lines.slice(1).map((l,n)=>{let r=parseCsvLine(l,sep),amount=mi>=0?parseMoney(r[mi]):parseMoney(r[cri])-Math.abs(parseMoney(r[debi]));return{id:"b"+n,date:r[di]||"",label:r[li]||"",amount,match:null,status:"non_rapproche"}}).filter(r=>r.date||r.label||r.amount);bankMeta={opening:null,closing:null,debits:rows.filter(x=>x.amount<0).reduce((a,x)=>a+Math.abs(x.amount),0),credits:rows.filter(x=>x.amount>0).reduce((a,x)=>a+x.amount,0)};return rows}
-function isoGuess(d){let m=String(d).match(/(\d{1,2})[\/.-](\d{1,2})[\/.-](\d{2,4})/);if(!m)return String(d).slice(0,10);let y=m[3].length===2?"20"+m[3]:m[3];return `${y}-${m[2].padStart(2,"0")}-${m[1].padStart(2,"0")}`}
+function isoGuess(d){let v=String(d||"").trim();if(/^\d{4}-\d{2}-\d{2}$/.test(v))return v;let m=v.match(/^(\d{1,2})[\/.-](\d{1,2})[\/.-](\d{2,4})$/);if(!m)return v.slice(0,10);let y=m[3].length===2?"20"+m[3]:m[3];return `${y}-${m[2].padStart(2,"0")}-${m[1].padStart(2,"0")}`}
 async function extractPdfText(file){
  if(!window.pdfjsLib) throw new Error("Le lecteur PDF n’est pas encore chargé. Réessaie dans quelques secondes.");
  let data=new Uint8Array(await file.arrayBuffer()),pdf=await window.pdfjsLib.getDocument({data}).promise,pages=[];
@@ -446,6 +446,7 @@ function createFromBank(i){
  $("entryAmount").value=Math.abs(r.amount).toFixed(2);
  $("entryLabel").value=r.label.slice(0,180);
  $("entryPayment").value=/prelevement/i.test(r.label)?"Prélèvement":/carte/i.test(r.label)?"Carte bancaire":"Virement";
+ let bankAccount=accounts.find(a=>a.type==="banque");if(bankAccount)$("entryAccount").value=bankAccount.id;
  $("entryNotes").value="Créée depuis le rapprochement bancaire.";
  entryMsg("🏦 Écriture préparée depuis un mouvement bancaire. À la validation, le rapprochement sera automatique.","ok");
 }
