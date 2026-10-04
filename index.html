@@ -46,7 +46,7 @@ table{width:100%;border-collapse:collapse;font-size:14px}th,td{text-align:left;p
 </style>
 </head>
 <body>
-<header><div class="head"><div><h1>🏉 Compta RCSQ</h1><p id="exerciseHead">Exercice 2026-2027</p></div><div id="headerUser"></div></div></header>
+<header><div class="head"><div><h1>🏉 Compta RCSQ</h1><div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap"><strong>📅 Exercice</strong><select id="exerciseSelect" style="width:auto;min-width:150px;padding:8px 10px"></select></div><p id="exerciseHead"></p></div><div id="headerUser"></div></div></header>
 <main>
 <section id="loginView" class="card login">
 <h2>Connexion 🔐</h2>
@@ -175,7 +175,7 @@ window.pdfjsLib=pdfjsLib;
 (function(){
 const URL="https://wrrwanpgvqozesdcqozl.supabase.co", KEY="sb_publishable_616PWlfFWgNPkfnhwnsRDw_qmzbvo-Q";
 const $=id=>document.getElementById(id), euro=n=>new Intl.NumberFormat("fr-FR",{style:"currency",currency:"EUR"}).format(Number(n||0));
-let sb=null,user=null,profile=null,fy=null,accounts=[],cats=[],entries=[],attachments=[],knownProfiles=[],entryType="depense",bankRows=[],bankMeta={opening:null,closing:null,debits:0,credits:0},bankStatementId=null,bankStatements=[],pendingBankIndex=null;
+let sb=null,user=null,profile=null,fy=null,fiscalYears=[],accounts=[],cats=[],entries=[],attachments=[],knownProfiles=[],entryType="depense",bankRows=[],bankMeta={opening:null,closing:null,debits:0,credits:0},bankStatementId=null,bankStatements=[],pendingBankIndex=null;
 function authMsg(m,k){$("authStatus").textContent=m;$("authStatus").className=k||""}
 if(!window.supabase?.createClient){authMsg("ERREUR : Supabase ne s'est pas chargé.","err");return}
 sb=window.supabase.createClient(URL,KEY);authMsg("Supabase chargé ✅","ok");
@@ -200,18 +200,30 @@ async function signup(){
 async function boot(){
  const {data:{session}}=await sb.auth.getSession();if(!session){$("loginView").classList.remove("hidden");$("appView").classList.add("hidden");return}
  user=session.user;$("loginView").classList.add("hidden");$("appView").classList.remove("hidden");
- const [p,y,a,c]=await Promise.all([
+ const [p,ys,a]=await Promise.all([
   sb.from("profiles").select("*").eq("id",user.id).maybeSingle(),
-  sb.from("fiscal_years").select("*").eq("is_active",true).maybeSingle(),
-  sb.from("accounts").select("*").eq("active",true).order("name"),
-  sb.from("budget_categories").select("*").eq("active",true).order("name")
+  sb.from("fiscal_years").select("*").order("start_date",{ascending:false}),
+  sb.from("accounts").select("*").eq("active",true).order("name")
  ]);
- profile=p.data||{display_name:user.email.split("@")[0],role:"lecture"};fy=y.data;accounts=a.data||[];cats=c.data||[];knownProfiles=profile?.id?[profile]:[{id:user.id,display_name:profile.display_name||user.email.split("@")[0],role:profile.role}];
+ profile=p.data||{display_name:user.email.split("@")[0],role:"lecture"};fiscalYears=ys.data||[];accounts=a.data||[];knownProfiles=profile?.id?[profile]:[{id:user.id,display_name:profile.display_name||user.email.split("@")[0],role:profile.role}];
+ fy=fiscalYears.find(x=>x.is_active)||fiscalYears[0]||null;
  $("welcome").textContent="Bienvenue "+(profile.display_name||user.email);$("roleBadge").textContent="Rôle : "+profile.role;$("headerUser").textContent=user.email;
- if(fy){$("exerciseHead").textContent="Exercice "+fy.label;$("period").textContent=`Du ${frDate(fy.start_date)} au ${frDate(fy.end_date)}`}
- fillAccounts();await loadEntries();renderAll();if(["admin","tresorier"].includes(profile.role))await loadBankStatements();if(profile.role==="admin"){$("usersTabBtn").classList.remove("hidden");await loadUsers();}else{$("usersTabBtn").classList.add("hidden");}
+ $("exerciseSelect").innerHTML=fiscalYears.map(x=>`<option value="${x.id}">${esc(x.label)}</option>`).join("");if(fy)$("exerciseSelect").value=fy.id;
+ fillAccounts();await loadFiscalYearData();if(profile.role==="admin"){$("usersTabBtn").classList.remove("hidden");await loadUsers();}else{$("usersTabBtn").classList.add("hidden");}
 }
 function frDate(d){return d?new Date(d+"T12:00:00").toLocaleDateString("fr-FR"):""}
+function fiscalYearForDate(d){return fiscalYears.find(x=>d>=x.start_date&&d<=x.end_date)||null}
+async function loadFiscalYearData(){
+ if(!fy)return;
+ $("exerciseHead").textContent=`Du ${frDate(fy.start_date)} au ${frDate(fy.end_date)}`;$("period").textContent=`Du ${frDate(fy.start_date)} au ${frDate(fy.end_date)}`;
+ const c=await sb.from("budget_categories").select("*").eq("fiscal_year_id",fy.id).eq("active",true).order("name");cats=c.data||[];
+ bankRows=[];bankMeta={opening:null,closing:null,debits:0,credits:0};bankStatementId=null;bankStatements=[];
+ await loadEntries();renderAll();renderBank();if(["admin","tresorier"].includes(profile.role))await loadBankStatements();
+}
+async function changeFiscalYear(){
+ let next=fiscalYears.find(x=>x.id===$("exerciseSelect").value);if(!next||next.id===fy?.id)return;
+ fy=next;pendingBankIndex=null;await loadFiscalYearData();
+}
 async function loadEntries(){if(!fy)return;const {data,error}=await sb.from("entries").select("*").eq("fiscal_year_id",fy.id).order("entry_date",{ascending:false}).order("created_at",{ascending:false});if(error)console.error(error);entries=data||[];if(entries.length){const ar=await sb.from("attachments").select("*").in("entry_id",entries.map(e=>e.id)).order("created_at",{ascending:false});attachments=ar.data||[]}else attachments=[]}
 function catName(id){let c=cats.find(x=>x.id===id);if(!c)return "—";let p=c.parent_id&&cats.find(x=>x.id===c.parent_id);return p?p.name+" › "+c.name:c.name}
 function accName(id){return accounts.find(x=>x.id===id)?.name||"—"}
@@ -294,7 +306,7 @@ async function saveBudgetEdit(){
 function openEntry(type){entryType=type;fillCategories();$("entryTitle").textContent=type==="recette"?"Nouvelle recette":"Nouvelle dépense";$("entryDate").value=new Date().toISOString().slice(0,10);$("entryCard").classList.remove("hidden");$("entryCard").scrollIntoView({behavior:"smooth"})}
 async function saveEntry(status){
  if(!["admin","tresorier","saisie"].includes(profile.role))return entryMsg("Ton rôle est en lecture seule.","err");
- const amount=Number($("entryAmount").value),label=$("entryLabel").value.trim();if(!fy||!amount||!label)return entryMsg("Date, montant et libellé sont obligatoires.","err");
+ const amount=Number($("entryAmount").value),label=$("entryLabel").value.trim(),entryDate=$("entryDate").value;if(!fy||!amount||!label||!entryDate)return entryMsg("Date, montant et libellé sont obligatoires.","err");let dateFy=fiscalYearForDate(entryDate);if(!dateFy)return entryMsg("Cette date ne correspond à aucun exercice comptable configuré.","err");if(dateFy.id!==fy.id)return entryMsg(`Cette date appartient à l’exercice ${dateFy.label}. Sélectionne cet exercice avant d’enregistrer.`,"err");
  let prefix=entryType==="depense"?"DEP":"REC";
  let nums=entries.filter(e=>e.piece_number&&e.piece_number.startsWith(prefix+"-")).map(e=>parseInt(e.piece_number.split("-").pop(),10)).filter(Number.isFinite);
  let seq=(nums.length?Math.max(...nums.filter(n=>n<100000),0):0)+1;
@@ -477,16 +489,18 @@ async function saveSharedBank(){
  if(!fy||!bankRows.length){$("bankNotice").textContent="Importe d’abord un relevé bancaire.";$("bankNotice").className="notice err";return}
  let account=accounts.find(a=>a.type==="banque")||accounts[0],period=bankPeriod(),file=$("bankFile").files[0];
  if(!account||!period){$("bankNotice").textContent="Compte bancaire ou période introuvable.";$("bankNotice").className="notice err";return}
+ let targetFy=fiscalYearForDate(period.start),endFy=fiscalYearForDate(period.end);
+ if(!targetFy||!endFy||targetFy.id!==endFy.id){$("bankNotice").textContent="La période du relevé ne correspond pas à un exercice unique.";$("bankNotice").className="notice err";return}
  $("bankSaveBtn").disabled=true;$("bankNotice").textContent="Synchronisation avec Supabase…";$("bankNotice").className="notice";
  try{
    let path=null;
    if(file){
      let safe=file.name.replace(/[^a-zA-Z0-9._-]/g,"_");
-     path=`${fy.label}/${period.start}_${period.end}/${Date.now()}-${safe}`;
+     path=`${targetFy.label}/${period.start}_${period.end}/${Date.now()}-${safe}`;
      let up=await sb.storage.from("releves-bancaires").upload(path,file,{upsert:false});
      if(up.error)throw up.error;
    }
-   let payload={fiscal_year_id:fy.id,account_id:account.id,period_start:period.start,period_end:period.end,opening_balance:bankMeta.opening,closing_balance:bankMeta.closing,total_debits:bankMeta.debits,total_credits:bankMeta.credits,original_name:file?.name||"Relevé bancaire",storage_path:path,imported_by:user.id};
+   let payload={fiscal_year_id:targetFy.id,account_id:account.id,period_start:period.start,period_end:period.end,opening_balance:bankMeta.opening,closing_balance:bankMeta.closing,total_debits:bankMeta.debits,total_credits:bankMeta.credits,original_name:file?.name||"Relevé bancaire",storage_path:path,imported_by:user.id};
    let {data:st,error:se}=await sb.from("bank_statements").upsert(payload,{onConflict:"account_id,period_start,period_end"}).select().single();
    if(se)throw se; bankStatementId=st.id;
    let existing=await sb.from("bank_transactions").select("id").eq("statement_id",st.id);
@@ -494,7 +508,7 @@ async function saveSharedBank(){
    if(existing.data?.length){let del=await sb.from("bank_transactions").delete().eq("statement_id",st.id);if(del.error)throw del.error}
    let tx=bankRows.map(r=>({statement_id:st.id,transaction_date:isoGuess(r.date),label:r.label,amount:r.amount,matched_entry_id:r.match||null,reconciliation_status:r.status||"non_rapproche",reconciled_by:r.match?user.id:null,reconciled_at:r.match?new Date().toISOString():null}));
    let ins=await sb.from("bank_transactions").insert(tx);if(ins.error)throw ins.error;
-   $("bankNotice").textContent="Relevé et rapprochements synchronisés ✅";$("bankNotice").className="notice ok";await loadBankStatements();
+   $("bankNotice").textContent=`Relevé synchronisé dans l’exercice ${targetFy.label} ✅`;$("bankNotice").className="notice ok";if(fy.id!==targetFy.id){fy=targetFy;$("exerciseSelect").value=fy.id;await loadFiscalYearData()}else await loadBankStatements();
  }catch(e){$("bankNotice").textContent="Synchronisation impossible : "+e.message;$("bankNotice").className="notice err"}
  finally{$("bankSaveBtn").disabled=false}
 }
@@ -553,7 +567,7 @@ function esc(s){return String(s??"").replace(/[&<>"']/g,m=>({"&":"&amp;","<":"&l
 $("togglePassword").addEventListener("click",togglePassword);$("forgotPassword").addEventListener("click",forgotPassword);$("loginBtn").addEventListener("click",login);$("signupBtn").addEventListener("click",signup);$("logoutBtn").addEventListener("click",async()=>{await sb.auth.signOut();location.reload()});
 document.querySelectorAll("nav button").forEach(b=>b.addEventListener("click",()=>showTab(b.dataset.tab)));document.querySelectorAll(".newEntry").forEach(b=>b.addEventListener("click",()=>openEntry(b.dataset.type)));
 document.querySelector(".gotoLedger").addEventListener("click",()=>showTab("ledger"));document.querySelector(".gotoBudget").addEventListener("click",()=>showTab("budget"));$("closeEntry").addEventListener("click",()=> $("entryCard").classList.add("hidden"));
-$("draftBtn").addEventListener("click",()=>saveEntry("brouillon"));$("validateBtn").addEventListener("click",()=>saveEntry("validee"));$("refreshBtn").addEventListener("click",async()=>{await loadEntries();renderAll()});$("csvBtn").addEventListener("click",csv);$("budgetEditClose").addEventListener("click",()=>$("budgetEdit").classList.add("hidden"));$("budgetEditSave").addEventListener("click",saveBudgetEdit);$("receiptClose").addEventListener("click",()=>$("receiptCard").classList.add("hidden"));$("receiptSave").addEventListener("click",saveReceipt);$("editEntryClose").addEventListener("click",()=>$("editEntryCard").classList.add("hidden"));$("editEntrySave").addEventListener("click",saveEntryEdit);$("usersRefreshBtn").addEventListener("click",loadUsers);$("bankImportBtn").addEventListener("click",importBank);$("bankSaveBtn").addEventListener("click",saveSharedBank);$("bankLoadBtn").addEventListener("click",loadSharedBank);$("bankClearBtn").addEventListener("click",()=>{bankRows=[];bankMeta={opening:null,closing:null,debits:0,credits:0};bankStatementId=null;$("bankFile").value="";$("bankNotice").textContent="Import vidé.";$("bankNotice").className="notice";renderBank()});
+$("exerciseSelect").addEventListener("change",changeFiscalYear);$("draftBtn").addEventListener("click",()=>saveEntry("brouillon"));$("validateBtn").addEventListener("click",()=>saveEntry("validee"));$("refreshBtn").addEventListener("click",async()=>{await loadEntries();renderAll()});$("csvBtn").addEventListener("click",csv);$("budgetEditClose").addEventListener("click",()=>$("budgetEdit").classList.add("hidden"));$("budgetEditSave").addEventListener("click",saveBudgetEdit);$("receiptClose").addEventListener("click",()=>$("receiptCard").classList.add("hidden"));$("receiptSave").addEventListener("click",saveReceipt);$("editEntryClose").addEventListener("click",()=>$("editEntryCard").classList.add("hidden"));$("editEntrySave").addEventListener("click",saveEntryEdit);$("usersRefreshBtn").addEventListener("click",loadUsers);$("bankImportBtn").addEventListener("click",importBank);$("bankSaveBtn").addEventListener("click",saveSharedBank);$("bankLoadBtn").addEventListener("click",loadSharedBank);$("bankClearBtn").addEventListener("click",()=>{bankRows=[];bankMeta={opening:null,closing:null,debits:0,credits:0};bankStatementId=null;$("bankFile").value="";$("bankNotice").textContent="Import vidé.";$("bankNotice").className="notice";renderBank()});
 sb.auth.onAuthStateChange((event,session)=>{if(event==="SIGNED_IN"&&session&&!user){user=session.user;setTimeout(boot,0)}});
 boot();
 })();
