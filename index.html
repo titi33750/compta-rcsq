@@ -119,6 +119,17 @@ table{width:100%;border-collapse:collapse;font-size:14px}th,td{text-align:left;p
  <div class="stat"><span>Total débits</span><strong id="bankDebits" class="red">0,00 €</strong></div>
  <div class="stat"><span>Total crédits</span><strong id="bankCredits" class="green">0,00 €</strong></div>
  <div class="stat"><span>Solde final</span><strong id="bankClosing">—</strong></div>
+</div>
+<div id="bankMonthlyControl" style="margin-top:18px;padding:18px;border:1px solid #dce3ef;border-radius:18px;background:#f8faff">
+ <div class="sectionTitle"><div><h2 id="bankMonthTitle" style="margin-bottom:3px">📊 Contrôle mensuel</h2><small id="bankMonthSubtitle">Charge un relevé pour afficher son avancement.</small></div><span id="bankMonthStatus" class="bankStatus bank-no">À traiter</span></div>
+ <div class="grid" style="margin-top:14px">
+  <div class="stat"><span>Mouvements</span><strong id="bankMonthTotal">0</strong></div>
+  <div class="stat"><span>Rapprochés</span><strong id="bankMonthMatched" class="green">0</strong></div>
+  <div class="stat"><span>Restants</span><strong id="bankMonthRemaining" class="red">0</strong></div>
+  <div class="stat"><span>Progression</span><strong id="bankMonthProgress">0 %</strong></div>
+ </div>
+ <div class="bar" style="height:12px;margin-top:14px"><i id="bankMonthBar" style="width:0%"></i></div>
+ <div id="bankMonthAmounts" style="margin-top:10px;color:#53617b;font-size:13px"></div>
 </div></div>
 <div class="card"><div class="sectionTitle"><h2>Mouvements importés</h2><span id="bankSummary" class="badge">0 mouvement</span></div><div id="bankRows">Aucun relevé importé.</div></div>
 </div>
@@ -451,6 +462,13 @@ function renderBank(){
  let ok=bankRows.filter(r=>r.status==="rapproche").length,maybe=bankRows.filter(r=>r.status==="probable").length;
  $("bankSummary").textContent=`${bankRows.length} mouvement${bankRows.length>1?"s":""} · ${ok} rapproché${ok>1?"s":""} · ${maybe} probable${maybe>1?"s":""}`;
  $("bankOpening").textContent=bankMeta.opening==null?"—":euro(bankMeta.opening);$("bankDebits").textContent=euro(bankMeta.debits);$("bankCredits").textContent=euro(bankMeta.credits);$("bankClosing").textContent=bankMeta.closing==null?"—":euro(bankMeta.closing);
+ let remaining=bankRows.length-ok,progress=bankRows.length?ok/bankRows.length*100:0;
+ let dates=bankRows.map(r=>isoGuess(r.date)).filter(d=>/^\d{4}-\d{2}-\d{2}$/.test(d)).sort(),monthDate=dates[0]||null;
+ let monthLabel=monthDate?new Date(monthDate+"T12:00:00").toLocaleDateString("fr-FR",{month:"long",year:"numeric"}):"Contrôle mensuel";monthLabel=monthLabel.charAt(0).toUpperCase()+monthLabel.slice(1);
+ $("bankMonthTitle").textContent="📊 "+monthLabel;$("bankMonthSubtitle").textContent=bankRows.length?`${ok} mouvement${ok>1?"s":""} rapproché${ok>1?"s":""} sur ${bankRows.length}`:"Charge un relevé pour afficher son avancement.";
+ $("bankMonthTotal").textContent=bankRows.length;$("bankMonthMatched").textContent=ok;$("bankMonthRemaining").textContent=remaining;$("bankMonthProgress").textContent=progress.toFixed(1).replace(".",",")+" %";$("bankMonthBar").style.width=Math.min(100,progress)+"%";
+ let matchedAmount=bankRows.filter(r=>r.status==="rapproche").reduce((a,r)=>a+Math.abs(Number(r.amount||0)),0),remainingAmount=bankRows.filter(r=>r.status!=="rapproche").reduce((a,r)=>a+Math.abs(Number(r.amount||0)),0);$("bankMonthAmounts").textContent=bankRows.length?`Montants rapprochés : ${euro(matchedAmount)} · À traiter : ${euro(remainingAmount)}`:"";
+ let ms=$("bankMonthStatus");if(!bankRows.length){ms.textContent="À traiter";ms.className="bankStatus bank-no"}else if(remaining===0){ms.textContent="✅ Mois entièrement rapproché";ms.className="bankStatus bank-ok"}else if(ok>0){ms.textContent="🟠 Rapprochement en cours";ms.className="bankStatus bank-maybe"}else{ms.textContent="🔴 À rapprocher";ms.className="bankStatus bank-no"}
  $("bankRows").innerHTML=bankRows.length?bankRows.map((r,i)=>{let e=entries.find(x=>x.id===r.match),cls=r.status==="rapproche"?"bank-ok":r.status==="probable"?"bank-maybe":"bank-no",lab=r.status==="rapproche"?"Rapproché":r.status==="probable"?"À vérifier":"Non rapproché";return `<article class="ledgerCard"><div class="ledgerCardTop"><div><strong>${esc(r.label)}</strong><br><small>${esc(r.date)}</small></div><div class="ledgerCardAmount ${r.amount>=0?"green":"red"}">${r.amount>=0?"+ ":"− "}${euro(Math.abs(r.amount))}</div></div><div style="margin-top:10px"><span class="bankStatus ${cls}">${lab}</span>${e?`<div class="ledgerMeta">↔ ${esc(e.piece_number)} · ${esc(e.label)} · ${euro(e.amount)}</div>`:""}</div><label style="margin-top:10px">Rattacher à une écriture</label><select class="bankMatch" data-i="${i}"><option value="">Aucune</option>${entries.map(x=>`<option value="${x.id}" ${x.id===r.match?"selected":""}>${esc(x.piece_number)} · ${esc(x.label)} · ${euro(x.amount)}</option>`).join("")}</select>${!r.match&&["admin","tresorier"].includes(profile.role)?`<button class="btn primary bankCreate" data-i="${i}" style="margin-top:10px;width:100%">＋ Créer l’écriture</button>`:""}</article>`}).join(""):"Aucun relevé importé.";
  document.querySelectorAll(".bankMatch").forEach(s=>s.addEventListener("change",async()=>{let i=Number(s.dataset.i),r=bankRows[i];r.match=s.value||null;r.status=r.match?"rapproche":"non_rapproche";if(bankStatementId)await persistBankMatch(i);renderBank()}));
  document.querySelectorAll(".bankCreate").forEach(b=>b.addEventListener("click",()=>createFromBank(Number(b.dataset.i))));
