@@ -65,7 +65,7 @@ table{width:100%;border-collapse:collapse;font-size:14px}th,td{text-align:left;p
 
 <section id="appView" class="hidden">
 <div class="topbar"><div><strong id="welcome">Bienvenue</strong><div class="badge" id="roleBadge">rôle</div></div><button id="logoutBtn" class="btn light">Déconnexion</button></div>
-<nav><button class="active" data-tab="dashboard">Tableau de bord</button><button data-tab="ledger">Livre de comptes</button><button data-tab="budget">Budget</button><button data-tab="bank">Rapprochement bancaire</button><button id="usersTabBtn" class="hidden" data-tab="users">👥 Utilisateurs</button></nav>
+<nav><button class="active" data-tab="dashboard">Tableau de bord</button><button data-tab="ledger">Livre de comptes</button><button data-tab="budget">Budget</button><button data-tab="expensesReport">📑 État des dépenses</button><button data-tab="bank">Rapprochement bancaire</button><button id="usersTabBtn" class="hidden" data-tab="users">👥 Utilisateurs</button></nav>
 
 <div id="dashboard" class="tab">
 <div class="grid">
@@ -102,6 +102,29 @@ table{width:100%;border-collapse:collapse;font-size:14px}th,td{text-align:left;p
  <button id="budgetEditSave" class="btn primary" style="margin-top:14px;width:100%">Enregistrer le prévisionnel</button>
  <div id="budgetEditStatus" class="notice hidden"></div>
 </div>
+</div>
+
+
+<div id="expensesReport" class="tab hidden">
+ <div class="card">
+  <div class="sectionTitle"><div><h2>📑 État des dépenses</h2><small id="expenseReportPeriod">Situation budgétaire des dépenses comptabilisées</small></div>
+   <div class="row"><button id="expenseReportCsv" class="btn light">Exporter CSV</button><button id="expenseReportPrint" class="btn light">Imprimer / PDF</button></div>
+  </div>
+  <div class="formgrid"><div><label>Arrêté au</label><input id="expenseReportDate" type="date"></div>
+   <div style="display:flex;align-items:end"><button id="expenseReportRefresh" class="btn primary" style="width:100%">Actualiser l’état</button></div>
+  </div>
+ </div>
+ <div class="grid" style="margin-bottom:16px">
+  <div class="stat"><span>Budget dépenses</span><strong id="expenseReportBudget">0,00 €</strong></div>
+  <div class="stat"><span>Dépenses comptabilisées</span><strong id="expenseReportActual" class="red">0,00 €</strong></div>
+  <div class="stat"><span>Reste disponible</span><strong id="expenseReportRemaining">0,00 €</strong></div>
+  <div class="stat"><span>Budget consommé</span><strong id="expenseReportPct">0 %</strong></div>
+ </div>
+ <div class="card">
+  <div id="expenseReportHeader" style="text-align:center;margin-bottom:18px"></div>
+  <div class="tablewrap"><table><thead><tr><th>Poste / factures comptabilisées</th><th>TTC</th><th>Budget</th><th>Reste disponible</th><th>% consommé</th></tr></thead><tbody id="expenseReportBody"></tbody></table></div>
+  <div id="expenseReportEmpty" class="notice hidden">Aucune dépense validée sur la période sélectionnée.</div>
+ </div>
 </div>
 
 <div id="bank" class="tab hidden">
@@ -312,6 +335,49 @@ function renderBudget(){
  $("budgetExpenses").innerHTML=roots.filter(r=>r.type==="depense").map(group).join("")||"Aucune catégorie.";
  $("budgetIncome").innerHTML=roots.filter(r=>r.type==="recette").map(group).join("")||"Aucune catégorie.";
  document.querySelectorAll(".budgetEditBtn").forEach(b=>b.addEventListener("click",()=>openBudgetEdit(b.dataset.id)));
+}
+
+
+function expenseReportCutoff(){
+ let i=$("expenseReportDate");if(!i)return fy?.end_date||"";
+ if(!i.value&&fy)i.value=fy.end_date;return i.value||fy?.end_date||"";
+}
+function expenseRootForCategory(id){
+ let c=cats.find(x=>x.id===id);if(!c)return null;
+ while(c?.parent_id){let p=cats.find(x=>x.id===c.parent_id);if(!p)break;c=p}return c;
+}
+function renderExpenseReport(){
+ if(!$("expenseReportBody")||!fy)return;
+ let cutoff=expenseReportCutoff();if(cutoff<fy.start_date)cutoff=fy.start_date;if(cutoff>fy.end_date)cutoff=fy.end_date;
+ let valid=entries.filter(e=>e.status==="validee"&&e.type==="depense"&&e.entry_date>=fy.start_date&&e.entry_date<=cutoff);
+ let expenseCats=cats.filter(c=>c.type==="depense"),roots=expenseCats.filter(c=>!c.parent_id);
+ let rootBudget=root=>{let ch=expenseCats.filter(c=>c.parent_id===root.id),ct=ch.reduce((a,c)=>a+Number(c.planned_amount||0),0);return ct>0?ct:Number(root.planned_amount||0)};
+ let totalBudget=roots.reduce((a,r)=>a+rootBudget(r),0),totalActual=valid.reduce((a,e)=>a+Number(e.amount||0),0),totalRemaining=totalBudget-totalActual,totalPct=totalBudget?totalActual/totalBudget*100:0;
+ $("expenseReportBudget").textContent=euro(totalBudget);$("expenseReportActual").textContent=euro(totalActual);$("expenseReportRemaining").textContent=euro(totalRemaining);$("expenseReportPct").textContent=totalBudget?totalPct.toFixed(1).replace(".",",")+" %":"—";
+ $("expenseReportPeriod").textContent=`Exercice ${fy.label} · arrêté au ${frDate(cutoff)}`;
+ $("expenseReportHeader").innerHTML=`<strong style="font-size:20px">RUGBY CLUB SAINT QUENTIN</strong><br><strong>ÉTAT DES DÉPENSES</strong><br><small>Exercice ${esc(fy.label)} · arrêté au ${frDate(cutoff)}</small>`;
+ let html="";
+ roots.forEach(root=>{
+  let children=expenseCats.filter(c=>c.parent_id===root.id),ids=[root.id,...children.map(c=>c.id)],ge=valid.filter(e=>ids.includes(e.category_id)),budget=rootBudget(root),actual=ge.reduce((a,e)=>a+Number(e.amount||0),0);
+  if(!budget&&!actual)return;let remain=budget-actual,pct=budget?actual/budget*100:0;
+  html+=`<tr style="background:#eef3fb;font-weight:900"><td>${esc(root.name)}</td><td>${euro(actual)}</td><td>${euro(budget)}</td><td>${euro(remain)}</td><td>${budget?pct.toFixed(1).replace(".",",")+" %":"—"}</td></tr>`;
+  let ordered=[...children];if(ge.some(e=>e.category_id===root.id))ordered.unshift(root);
+  ordered.forEach(c=>{
+   let ce=ge.filter(e=>e.category_id===c.id).sort((a,b)=>a.entry_date.localeCompare(b.entry_date)),cb=children.length?Number(c.planned_amount||0):(c.id===root.id?budget:0),ca=ce.reduce((a,e)=>a+Number(e.amount||0),0);
+   if(!cb&&!ca)return;let cr=cb-ca,cp=cb?ca/cb*100:0;
+   if(children.length)html+=`<tr style="font-weight:800"><td style="padding-left:20px">${esc(c.name)}</td><td>${euro(ca)}</td><td>${euro(cb)}</td><td>${euro(cr)}</td><td>${cb?cp.toFixed(1).replace(".",",")+" %":"—"}</td></tr>`;
+   ce.forEach(e=>html+=`<tr><td style="padding-left:${children.length?38:20}px"><small>${frDate(e.entry_date)} · ${esc(e.piece_number)} · ${esc(e.third_party||"")}</small><br>${esc(e.label)}</td><td>${euro(e.amount)}</td><td></td><td></td><td></td></tr>`);
+  });
+ });
+ html+=`<tr style="font-weight:950;border-top:2px solid #17223b"><td>TOTAL GÉNÉRAL</td><td>${euro(totalActual)}</td><td>${euro(totalBudget)}</td><td>${euro(totalRemaining)}</td><td>${totalBudget?totalPct.toFixed(1).replace(".",",")+" %":"—"}</td></tr>`;
+ $("expenseReportBody").innerHTML=html;$("expenseReportEmpty").classList.toggle("hidden",valid.length>0||totalBudget>0);
+}
+function expenseReportCsv(){
+ if(!fy)return;let cutoff=expenseReportCutoff(),valid=entries.filter(e=>e.status==="validee"&&e.type==="depense"&&e.entry_date>=fy.start_date&&e.entry_date<=cutoff);
+ let rows=[["Poste","Sous-poste","Pièce","Date","Fournisseur / tiers","Libellé","TTC","Budget du sous-poste"]];
+ valid.sort((a,b)=>a.entry_date.localeCompare(b.entry_date)).forEach(e=>{let c=cats.find(x=>x.id===e.category_id),root=expenseRootForCategory(e.category_id);rows.push([root?.name||"Sans catégorie",c&&c.id!==root?.id?c.name:"",e.piece_number,e.entry_date,e.third_party||"",e.label,e.amount,c?.planned_amount||0])});
+ let txt=rows.map(r=>r.map(v=>'"'+String(v??"").replaceAll('"','""')+'"').join(";")).join("\n"),blob=new Blob(["\ufeff"+txt],{type:"text/csv;charset=utf-8"}),a=document.createElement("a");
+ a.href=URL.createObjectURL(blob);a.download=`etat-depenses-${fy.label}-au-${cutoff}.csv`;a.click();setTimeout(()=>URL.revokeObjectURL(a.href),1000);
 }
 
 function openBudgetEdit(id){
@@ -726,7 +792,7 @@ function esc(s){return String(s??"").replace(/[&<>"']/g,m=>({"&":"&amp;","<":"&l
 $("togglePassword").addEventListener("click",togglePassword);$("forgotPassword").addEventListener("click",forgotPassword);$("loginBtn").addEventListener("click",login);$("signupBtn").addEventListener("click",signup);$("logoutBtn").addEventListener("click",async()=>{await sb.auth.signOut();location.reload()});
 document.querySelectorAll("nav button").forEach(b=>b.addEventListener("click",()=>showTab(b.dataset.tab)));document.querySelectorAll(".newEntry").forEach(b=>b.addEventListener("click",()=>openEntry(b.dataset.type)));
 document.querySelector(".gotoLedger").addEventListener("click",()=>showTab("ledger"));document.querySelector(".gotoBudget").addEventListener("click",()=>showTab("budget"));$("closeEntry").addEventListener("click",()=> $("entryCard").classList.add("hidden"));
-$("exerciseSelect").addEventListener("change",changeFiscalYear);$("draftBtn").addEventListener("click",()=>saveEntry("brouillon"));$("validateBtn").addEventListener("click",()=>saveEntry("validee"));$("refreshBtn").addEventListener("click",async()=>{await loadEntries();renderAll()});$("csvBtn").addEventListener("click",csv);$("budgetEditClose").addEventListener("click",()=>$("budgetEdit").classList.add("hidden"));$("budgetEditSave").addEventListener("click",saveBudgetEdit);$("receiptClose").addEventListener("click",()=>$("receiptCard").classList.add("hidden"));$("receiptSave").addEventListener("click",saveReceipt);$("editEntryClose").addEventListener("click",()=>$("editEntryCard").classList.add("hidden"));$("editEntrySave").addEventListener("click",saveEntryEdit);$("usersRefreshBtn").addEventListener("click",loadUsers);$("bankImportBtn").addEventListener("click",importBank);$("bankSaveBtn").addEventListener("click",saveSharedBank);$("bankLoadBtn").addEventListener("click",loadSharedBank);$("bankAssistSelect").addEventListener("click",()=>{bankAssist.forEach(p=>p.selected=true);renderBankAssist()});$("bankAssistValidate").addEventListener("click",validateBankAssist);$("bankClearBtn").addEventListener("click",()=>{bankRows=[];bankMeta={opening:null,closing:null,debits:0,credits:0};bankStatementId=null;$("bankFile").value="";$("bankNotice").textContent="Import vidé.";$("bankNotice").className="notice";renderBank()});
+$("exerciseSelect").addEventListener("change",changeFiscalYear);$("expenseReportRefresh").addEventListener("click",renderExpenseReport);$("expenseReportDate").addEventListener("change",renderExpenseReport);$("expenseReportCsv").addEventListener("click",expenseReportCsv);$("expenseReportPrint").addEventListener("click",()=>window.print());$("draftBtn").addEventListener("click",()=>saveEntry("brouillon"));$("validateBtn").addEventListener("click",()=>saveEntry("validee"));$("refreshBtn").addEventListener("click",async()=>{await loadEntries();renderAll()});$("csvBtn").addEventListener("click",csv);$("budgetEditClose").addEventListener("click",()=>$("budgetEdit").classList.add("hidden"));$("budgetEditSave").addEventListener("click",saveBudgetEdit);$("receiptClose").addEventListener("click",()=>$("receiptCard").classList.add("hidden"));$("receiptSave").addEventListener("click",saveReceipt);$("editEntryClose").addEventListener("click",()=>$("editEntryCard").classList.add("hidden"));$("editEntrySave").addEventListener("click",saveEntryEdit);$("usersRefreshBtn").addEventListener("click",loadUsers);$("bankImportBtn").addEventListener("click",importBank);$("bankSaveBtn").addEventListener("click",saveSharedBank);$("bankLoadBtn").addEventListener("click",loadSharedBank);$("bankAssistSelect").addEventListener("click",()=>{bankAssist.forEach(p=>p.selected=true);renderBankAssist()});$("bankAssistValidate").addEventListener("click",validateBankAssist);$("bankClearBtn").addEventListener("click",()=>{bankRows=[];bankMeta={opening:null,closing:null,debits:0,credits:0};bankStatementId=null;$("bankFile").value="";$("bankNotice").textContent="Import vidé.";$("bankNotice").className="notice";renderBank()});
 sb.auth.onAuthStateChange((event,session)=>{if(event==="SIGNED_IN"&&session&&!user){user=session.user;setTimeout(boot,0)}});
 boot();
 })();
