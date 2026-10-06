@@ -131,6 +131,18 @@ table{width:100%;border-collapse:collapse;font-size:14px}th,td{text-align:left;p
  <div class="bar" style="height:12px;margin-top:14px"><i id="bankMonthBar" style="width:0%"></i></div>
  <div id="bankMonthAmounts" style="margin-top:10px;color:#53617b;font-size:13px"></div>
 </div></div>
+<div id="bankAssistCard" class="card">
+  <div class="sectionTitle">
+    <div><h2>🤖 Rapprochement assisté</h2><small>Prépare les mouvements évidents. Rien n’est comptabilisé sans validation.</small></div>
+    <span id="bankAssistCount" class="badge">0 proposition</span>
+  </div>
+  <div id="bankAssistNotice" class="notice">Charge un relevé partagé pour analyser les mouvements non rapprochés.</div>
+  <div id="bankAssistRows" style="margin-top:12px"></div>
+  <div class="row" style="margin-top:14px">
+    <button id="bankAssistSelect" class="btn light">Tout sélectionner</button>
+    <button id="bankAssistValidate" class="btn primary">✅ Valider les écritures sélectionnées</button>
+  </div>
+</div>
 <div class="card"><div class="sectionTitle"><h2>Mouvements importés</h2><span id="bankSummary" class="badge">0 mouvement</span></div><div id="bankRows">Aucun relevé importé.</div></div>
 </div>
 
@@ -193,7 +205,7 @@ window.pdfjsLib=pdfjsLib;
 (function(){
 const URL="https://wrrwanpgvqozesdcqozl.supabase.co", KEY="sb_publishable_616PWlfFWgNPkfnhwnsRDw_qmzbvo-Q";
 const $=id=>document.getElementById(id), euro=n=>new Intl.NumberFormat("fr-FR",{style:"currency",currency:"EUR"}).format(Number(n||0));
-let sb=null,user=null,profile=null,fy=null,fiscalYears=[],accounts=[],cats=[],entries=[],attachments=[],knownProfiles=[],entryType="depense",bankRows=[],bankMeta={opening:null,closing:null,debits:0,credits:0},bankStatementId=null,bankStatements=[],pendingBankIndex=null;
+let sb=null,user=null,profile=null,fy=null,fiscalYears=[],accounts=[],cats=[],entries=[],attachments=[],knownProfiles=[],entryType="depense",bankRows=[],bankMeta={opening:null,closing:null,debits:0,credits:0},bankStatementId=null,bankStatements=[],pendingBankIndex=null,bankAssist=[];
 function authMsg(m,k){$("authStatus").textContent=m;$("authStatus").className=k||""}
 if(!window.supabase?.createClient){authMsg("ERREUR : Supabase ne s'est pas chargé.","err");return}
 sb=window.supabase.createClient(URL,KEY);authMsg("Supabase chargé ✅","ok");
@@ -458,6 +470,107 @@ function parseSgPdfText(text){
  return rows;
 }
 function suggestBankMatches(){bankRows.forEach(r=>{let rd=isoGuess(r.date),c=entries.map(e=>{let expected=e.type==="recette"?Number(e.amount):-Number(e.amount),diff=Math.abs(expected-r.amount),days=Math.abs((new Date(e.entry_date)-new Date(rd))/86400000),score=(diff<0.01?100:diff<1?60:0)+(days===0?40:days<=3?20:0)+(norm(r.label).includes(norm(e.label).slice(0,8))?20:0);return{e,score}}).filter(x=>x.score>=80).sort((a,b)=>b.score-a.score);if(c.length){r.match=c[0].e.id;r.status=c[0].score>=120?"rapproche":"probable"}});renderBank()}
+
+function bankPersonName(label){
+  let raw=String(label||"").replace(/\s+/g," ").trim();
+  let m=raw.match(/(?:DE\s*:\s*|DE:\s*|VIR(?:EMENT)?\s+(?:RECU|REÇU).*?\sDE\s*:?\s*)(?:M(?:ME|LLE)?\.?\s+)?([A-ZÀ-ÖØ-Ý' -]{4,60}?)(?=\s*[·|]|\s+MOTIF|$)/i);
+  let n=(m?m[1]:"").replace(/\b(MOTIF|REF|REFERENCE|VIR|RECU|REÇU)\b.*$/i,"").trim();
+  return n.toLowerCase().replace(/(^|[ '\-])([a-zà-öø-ÿ])/g,(a,b,c)=>b+c.toUpperCase());
+}
+function assistCategory(type,label){
+  let list=cats.filter(c=>c.type===type), n=norm(label);
+  let score=c=>{
+    let x=norm(catName(c.id));
+    if(type==="recette"&&(/cotisation|licence/.test(n))&&/cotisation/.test(x))return 100;
+    if(type==="recette"&&/subvention/.test(n)&&/subvention/.test(x))return 95;
+    if(type==="depense"&&/ligue|ffr|federal/.test(n)&&/licence|federal|federaux/.test(x))return 95;
+    if(type==="depense"&&/assur/.test(n)&&/assur/.test(x))return 90;
+    return 0;
+  };
+  return list.map(c=>({c,s:score(c)})).sort((a,b)=>b.s-a.s)[0]||null;
+}
+function buildBankAssist(){
+  bankAssist=[];
+  bankRows.forEach((r,i)=>{
+    if(r.match||r.status==="rapproche")return;
+    let type=Number(r.amount)>=0?"recette":"depense";
+    let name=bankPersonName(r.label), cat=assistCategory(type,r.label), confidence=0;
+    if(type==="recette"&&Math.abs(Number(r.amount)-80)<0.01&&name){
+      confidence=95;
+      if(!cat?.s){
+        let c=cats.find(c=>c.type==="recette"&&/cotisation/.test(norm(catName(c.id))));
+        if(c)cat={c,s:90};
+      }
+    } else if(cat?.s) confidence=cat.s;
+    if(confidence>=80&&cat?.c){
+      let label=type==="recette"&&/cotisation/.test(norm(catName(cat.c.id)))
+        ? `Cotisation ${name||"adhérent"}`
+        : String(r.label||"").slice(0,120);
+      bankAssist.push({i,selected:true,type,date:isoGuess(r.date),amount:Math.abs(Number(r.amount)),third:name||"",label,category_id:cat.c.id,confidence});
+    }
+  });
+  renderBankAssist();
+}
+function renderBankAssist(){
+  let box=$("bankAssistRows"); if(!box)return;
+  $("bankAssistCount").textContent=`${bankAssist.length} proposition${bankAssist.length>1?"s":""}`;
+  $("bankAssistNotice").textContent=bankAssist.length
+    ? `${bankAssist.length} mouvement(s) reconnu(s). Contrôle les propositions puis valide seulement celles qui sont correctes.`
+    : "Aucune proposition suffisamment sûre. Les mouvements restent à traiter manuellement.";
+  box.innerHTML=bankAssist.map((p,k)=>`<article class="ledgerCard">
+    <div class="ledgerCardTop">
+      <div><label style="display:flex;gap:8px;align-items:center"><input class="assistCheck" data-k="${k}" type="checkbox" ${p.selected?"checked":""} style="width:auto"><strong>${esc(p.label)}</strong></label><small>${frDate(p.date)} · confiance ${p.confidence}%</small></div>
+      <div class="ledgerCardAmount ${p.type==="recette"?"green":"red"}">${p.type==="recette"?"+":"−"} ${euro(p.amount)}</div>
+    </div>
+    <div class="formgrid" style="margin-top:10px">
+      <div><label>Tiers</label><input class="assistThird" data-k="${k}" value="${esc(p.third)}"></div>
+      <div><label>Libellé</label><input class="assistLabel" data-k="${k}" value="${esc(p.label)}"></div>
+      <div class="wide"><label>Catégorie</label><select class="assistCat" data-k="${k}">${cats.filter(c=>c.type===p.type).map(c=>`<option value="${c.id}" ${c.id===p.category_id?"selected":""}>${esc(catName(c.id))}</option>`).join("")}</select></div>
+    </div>
+  </article>`).join("");
+  document.querySelectorAll(".assistCheck").forEach(x=>x.onchange=()=>bankAssist[+x.dataset.k].selected=x.checked);
+  document.querySelectorAll(".assistThird").forEach(x=>x.oninput=()=>bankAssist[+x.dataset.k].third=x.value);
+  document.querySelectorAll(".assistLabel").forEach(x=>x.oninput=()=>bankAssist[+x.dataset.k].label=x.value);
+  document.querySelectorAll(".assistCat").forEach(x=>x.onchange=()=>bankAssist[+x.dataset.k].category_id=x.value);
+}
+async function validateBankAssist(){
+  if(!bankStatementId)return alert("Charge d’abord un relevé partagé avant la validation groupée.");
+  let todo=bankAssist.filter(p=>p.selected);
+  if(!todo.length)return alert("Aucune proposition sélectionnée.");
+  if(!confirm(`Créer et rapprocher ${todo.length} écriture(s) ?`))return;
+  $("bankAssistValidate").disabled=true;
+  let bankAccount=accounts.find(a=>a.type==="banque")||accounts[0], done=0;
+  try{
+    for(let p of todo){
+      let r=bankRows[p.i]; if(!r||r.match)continue;
+      let prefix=p.type==="depense"?"DEP":"REC";
+      let nums=entries.filter(e=>e.piece_number?.startsWith(prefix+"-")).map(e=>parseInt(e.piece_number.split("-").pop(),10)).filter(Number.isFinite);
+      let seq=(nums.length?Math.max(...nums.filter(n=>n<100000),0):0)+1;
+      let piece=prefix+"-"+String(seq).padStart(4,"0");
+      let payload={
+        fiscal_year_id:fy.id,piece_number:piece,entry_date:p.date,type:p.type,label:p.label.trim(),
+        third_party:p.third.trim()||null,category_id:p.category_id,account_id:bankAccount?.id||null,
+        payment_method:/prelevement/i.test(r.label)?"Prélèvement":/carte/i.test(r.label)?"Carte bancaire":"Virement",
+        amount:p.amount,notes:"Créée par rapprochement assisté.",status:"validee",created_by:user.id
+      };
+      let ins=await sb.from("entries").insert(payload).select().single();
+      if(ins.error)throw ins.error;
+      entries.push(ins.data);
+      let up=await sb.from("bank_transactions").update({
+        matched_entry_id:ins.data.id,reconciliation_status:"rapproche",reconciled_by:user.id,reconciled_at:new Date().toISOString()
+      }).eq("id",r.id).is("matched_entry_id",null);
+      if(up.error)throw up.error;
+      r.match=ins.data.id; r.status="rapproche"; done++;
+    }
+    await loadEntries(); renderAll(); renderBank();
+    $("bankAssistNotice").textContent=`${done} écriture(s) créée(s) et rapprochée(s) ✅`;
+  }catch(e){
+    alert("Traitement interrompu : "+e.message+". Les écritures déjà validées restent enregistrées.");
+    await loadEntries(); renderAll(); renderBank();
+  }finally{
+    $("bankAssistValidate").disabled=false;
+  }
+}
 function renderBank(){
  let ok=bankRows.filter(r=>r.status==="rapproche").length,maybe=bankRows.filter(r=>r.status==="probable").length;
  $("bankSummary").textContent=`${bankRows.length} mouvement${bankRows.length>1?"s":""} · ${ok} rapproché${ok>1?"s":""} · ${maybe} probable${maybe>1?"s":""}`;
@@ -472,6 +585,7 @@ function renderBank(){
  $("bankRows").innerHTML=bankRows.length?bankRows.map((r,i)=>{let e=entries.find(x=>x.id===r.match),cls=r.status==="rapproche"?"bank-ok":r.status==="probable"?"bank-maybe":"bank-no",lab=r.status==="rapproche"?"Rapproché":r.status==="probable"?"À vérifier":"Non rapproché";return `<article class="ledgerCard"><div class="ledgerCardTop"><div><strong>${esc(r.label)}</strong><br><small>${esc(r.date)}</small></div><div class="ledgerCardAmount ${r.amount>=0?"green":"red"}">${r.amount>=0?"+ ":"− "}${euro(Math.abs(r.amount))}</div></div><div style="margin-top:10px"><span class="bankStatus ${cls}">${lab}</span>${e?`<div class="ledgerMeta">↔ ${esc(e.piece_number)} · ${esc(e.label)} · ${euro(e.amount)}</div>`:""}</div><label style="margin-top:10px">Rattacher à une écriture</label><select class="bankMatch" data-i="${i}"><option value="">Aucune</option>${entries.map(x=>`<option value="${x.id}" ${x.id===r.match?"selected":""}>${esc(x.piece_number)} · ${esc(x.label)} · ${euro(x.amount)}</option>`).join("")}</select>${!r.match&&["admin","tresorier"].includes(profile.role)?`<button class="btn primary bankCreate" data-i="${i}" style="margin-top:10px;width:100%">＋ Créer l’écriture</button>`:""}</article>`}).join(""):"Aucun relevé importé.";
  document.querySelectorAll(".bankMatch").forEach(s=>s.addEventListener("change",async()=>{let i=Number(s.dataset.i),r=bankRows[i];r.match=s.value||null;r.status=r.match?"rapproche":"non_rapproche";if(bankStatementId)await persistBankMatch(i);renderBank()}));
  document.querySelectorAll(".bankCreate").forEach(b=>b.addEventListener("click",()=>createFromBank(Number(b.dataset.i))));
+ buildBankAssist();
 }
 function createFromBank(i){
  let r=bankRows[i];if(!r)return;
@@ -592,7 +706,7 @@ function esc(s){return String(s??"").replace(/[&<>"']/g,m=>({"&":"&amp;","<":"&l
 $("togglePassword").addEventListener("click",togglePassword);$("forgotPassword").addEventListener("click",forgotPassword);$("loginBtn").addEventListener("click",login);$("signupBtn").addEventListener("click",signup);$("logoutBtn").addEventListener("click",async()=>{await sb.auth.signOut();location.reload()});
 document.querySelectorAll("nav button").forEach(b=>b.addEventListener("click",()=>showTab(b.dataset.tab)));document.querySelectorAll(".newEntry").forEach(b=>b.addEventListener("click",()=>openEntry(b.dataset.type)));
 document.querySelector(".gotoLedger").addEventListener("click",()=>showTab("ledger"));document.querySelector(".gotoBudget").addEventListener("click",()=>showTab("budget"));$("closeEntry").addEventListener("click",()=> $("entryCard").classList.add("hidden"));
-$("exerciseSelect").addEventListener("change",changeFiscalYear);$("draftBtn").addEventListener("click",()=>saveEntry("brouillon"));$("validateBtn").addEventListener("click",()=>saveEntry("validee"));$("refreshBtn").addEventListener("click",async()=>{await loadEntries();renderAll()});$("csvBtn").addEventListener("click",csv);$("budgetEditClose").addEventListener("click",()=>$("budgetEdit").classList.add("hidden"));$("budgetEditSave").addEventListener("click",saveBudgetEdit);$("receiptClose").addEventListener("click",()=>$("receiptCard").classList.add("hidden"));$("receiptSave").addEventListener("click",saveReceipt);$("editEntryClose").addEventListener("click",()=>$("editEntryCard").classList.add("hidden"));$("editEntrySave").addEventListener("click",saveEntryEdit);$("usersRefreshBtn").addEventListener("click",loadUsers);$("bankImportBtn").addEventListener("click",importBank);$("bankSaveBtn").addEventListener("click",saveSharedBank);$("bankLoadBtn").addEventListener("click",loadSharedBank);$("bankClearBtn").addEventListener("click",()=>{bankRows=[];bankMeta={opening:null,closing:null,debits:0,credits:0};bankStatementId=null;$("bankFile").value="";$("bankNotice").textContent="Import vidé.";$("bankNotice").className="notice";renderBank()});
+$("exerciseSelect").addEventListener("change",changeFiscalYear);$("draftBtn").addEventListener("click",()=>saveEntry("brouillon"));$("validateBtn").addEventListener("click",()=>saveEntry("validee"));$("refreshBtn").addEventListener("click",async()=>{await loadEntries();renderAll()});$("csvBtn").addEventListener("click",csv);$("budgetEditClose").addEventListener("click",()=>$("budgetEdit").classList.add("hidden"));$("budgetEditSave").addEventListener("click",saveBudgetEdit);$("receiptClose").addEventListener("click",()=>$("receiptCard").classList.add("hidden"));$("receiptSave").addEventListener("click",saveReceipt);$("editEntryClose").addEventListener("click",()=>$("editEntryCard").classList.add("hidden"));$("editEntrySave").addEventListener("click",saveEntryEdit);$("usersRefreshBtn").addEventListener("click",loadUsers);$("bankImportBtn").addEventListener("click",importBank);$("bankSaveBtn").addEventListener("click",saveSharedBank);$("bankLoadBtn").addEventListener("click",loadSharedBank);$("bankAssistSelect").addEventListener("click",()=>{bankAssist.forEach(p=>p.selected=true);renderBankAssist()});$("bankAssistValidate").addEventListener("click",validateBankAssist);$("bankClearBtn").addEventListener("click",()=>{bankRows=[];bankMeta={opening:null,closing:null,debits:0,credits:0};bankStatementId=null;$("bankFile").value="";$("bankNotice").textContent="Import vidé.";$("bankNotice").className="notice";renderBank()});
 sb.auth.onAuthStateChange((event,session)=>{if(event==="SIGNED_IN"&&session&&!user){user=session.user;setTimeout(boot,0)}});
 boot();
 })();
