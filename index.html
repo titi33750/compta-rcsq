@@ -377,6 +377,29 @@ function expenseRootForCategory(id){
  let c=cats.find(x=>x.id===id);if(!c)return null;
  while(c?.parent_id){let p=cats.find(x=>x.id===c.parent_id);if(!p)break;c=p}return c;
 }
+function expenseReportCleanText(s){
+ let t=String(s||"").replace(/\s+/g," ").trim();
+ if(!t)return "";
+ // Les libellés issus directement du relevé bancaire restent dans l'écriture,
+ // mais ne polluent pas l'état synthétique des dépenses.
+ if(/(?:PRELEVEMENT|VIR(?:EMENT)?\s|VIR\s|REF:|MANDAT|REMISE:|ID:\s*FR|CPT\s*\d|DATE:\s*\d)/i.test(t))return "";
+ return t;
+}
+function expenseReportNormName(s){
+ return String(s||"").normalize("NFD").replace(/[\u0300-\u036f]/g,"").replace(/[^a-z0-9]+/gi," ").trim().toLowerCase();
+}
+function expenseReportEntryLabel(e,c,root){
+  let party=String(e.third_party||"").replace(/\s+/g," ").trim();
+  let clean=expenseReportCleanText(e.label);
+  let catName=String(c?.name||"").trim(),rootName=String(root?.name||"").trim();
+  let detail="";
+  if(clean){
+    let nClean=expenseReportNormName(clean),nParty=expenseReportNormName(party);
+    let nCat=expenseReportNormName(catName),nRoot=expenseReportNormName(rootName);
+    if(nClean!==nParty&&nClean!==nCat&&nClean!==nRoot)detail=clean;
+  }
+  return [frDate(e.entry_date),e.piece_number,party,detail].filter(Boolean).join(" · ");
+}
 function renderExpenseReport(){
  if(!$("expenseReportBody")||!fy)return;
  let cutoff=expenseReportCutoff();if(cutoff<fy.start_date)cutoff=fy.start_date;if(cutoff>fy.end_date)cutoff=fy.end_date;
@@ -390,14 +413,18 @@ function renderExpenseReport(){
  let html="";
  roots.forEach(root=>{
   let children=expenseCats.filter(c=>c.parent_id===root.id),ids=[root.id,...children.map(c=>c.id)],ge=valid.filter(e=>ids.includes(e.category_id)),budget=rootBudget(root),actual=ge.reduce((a,e)=>a+Number(e.amount||0),0);
-  if(!budget&&!actual)return;let remain=budget-actual,pct=budget?actual/budget*100:0;
+  if(!budget&&!actual)return;
+  let remain=budget-actual,pct=budget?actual/budget*100:0;
   html+=`<tr style="background:#eef3fb;font-weight:900"><td>${esc(root.name)}</td><td>${euro(actual)}</td><td>${euro(budget)}</td><td>${euro(remain)}</td><td>${budget?pct.toFixed(1).replace(".",",")+" %":"—"}</td></tr>`;
-  let ordered=[...children];if(ge.some(e=>e.category_id===root.id))ordered.unshift(root);
-  ordered.forEach(c=>{
-   let ce=ge.filter(e=>e.category_id===c.id).sort((a,b)=>a.entry_date.localeCompare(b.entry_date)),cb=children.length?Number(c.planned_amount||0):(c.id===root.id?budget:0),ca=ce.reduce((a,e)=>a+Number(e.amount||0),0);
-   if(!cb&&!ca)return;let cr=cb-ca,cp=cb?ca/cb*100:0;
-   if(children.length)html+=`<tr style="font-weight:800"><td style="padding-left:20px">${esc(c.name)}</td><td>${euro(ca)}</td><td>${euro(cb)}</td><td>${euro(cr)}</td><td>${cb?cp.toFixed(1).replace(".",",")+" %":"—"}</td></tr>`;
-   ce.forEach(e=>html+=`<tr><td style="padding-left:${children.length?38:20}px"><small>${frDate(e.entry_date)} · ${esc(e.piece_number)} · ${esc(e.third_party||"")}</small><br>${esc(e.label)}</td><td>${euro(e.amount)}</td><td></td><td></td><td></td></tr>`);
+  ge.filter(e=>e.category_id===root.id).sort((a,b)=>a.entry_date.localeCompare(b.entry_date)).forEach(e=>{
+   html+=`<tr><td style="padding-left:20px">${esc(expenseReportEntryLabel(e,root,root))}</td><td>${euro(e.amount)}</td><td></td><td></td><td></td></tr>`;
+  });
+  children.forEach(c=>{
+   let ce=ge.filter(e=>e.category_id===c.id).sort((a,b)=>a.entry_date.localeCompare(b.entry_date)),cb=Number(c.planned_amount||0),ca=ce.reduce((a,e)=>a+Number(e.amount||0),0);
+   if(!cb&&!ca)return;
+   let cr=cb-ca,cp=cb?ca/cb*100:0,sameAsRoot=expenseReportNormName(c.name)===expenseReportNormName(root.name);
+   if(!sameAsRoot)html+=`<tr style="font-weight:800"><td style="padding-left:20px">${esc(c.name)}</td><td>${euro(ca)}</td><td>${euro(cb)}</td><td>${euro(cr)}</td><td>${cb?cp.toFixed(1).replace(".",",")+" %":"—"}</td></tr>`;
+   ce.forEach(e=>html+=`<tr><td style="padding-left:${sameAsRoot?20:38}px">${esc(expenseReportEntryLabel(e,c,root))}</td><td>${euro(e.amount)}</td><td></td><td></td><td></td></tr>`);
   });
  });
  html+=`<tr style="font-weight:950;border-top:2px solid #17223b"><td>TOTAL GÉNÉRAL</td><td>${euro(totalActual)}</td><td>${euro(totalBudget)}</td><td>${euro(totalRemaining)}</td><td>${totalBudget?totalPct.toFixed(1).replace(".",",")+" %":"—"}</td></tr>`;
