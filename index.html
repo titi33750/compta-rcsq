@@ -43,6 +43,37 @@ table{width:100%;border-collapse:collapse;font-size:14px}th,td{text-align:left;p
  header,.topbar,nav,#entryCard{display:none!important}
 }
 @media(max-width:760px){#budget .grid{grid-template-columns:1fr 1fr!important}#budget .stat strong{font-size:20px}}
+/* Mobile: Etat des depenses lisible en cartes, sans colonnes coupees */
+@media(max-width:760px){
+  #expensesReport .grid{grid-template-columns:1fr 1fr!important}
+  #expensesReport .stat{padding:14px!important}
+  #expensesReport .stat strong{font-size:19px!important;overflow-wrap:anywhere}
+  #expensesReport .card{padding:16px!important}
+  #expensesReport .sectionTitle{display:block!important}
+  #expensesReport .sectionTitle .row{display:grid!important;grid-template-columns:1fr 1fr!important;margin-top:12px}
+  #expensesReport .tablewrap{overflow:visible!important}
+  #expensesReport table,#expensesReport thead,#expensesReport tbody,#expensesReport tr,#expensesReport th,#expensesReport td{display:block!important;width:100%!important}
+  #expensesReport thead{display:none!important}
+  #expensesReport tr{margin:0 0 12px!important;padding:12px!important;border:1px solid var(--line)!important;border-radius:14px!important;background:#fff}
+  #expensesReport td{border:0!important;padding:5px 0!important;text-align:left!important;overflow-wrap:anywhere!important;word-break:break-word!important}
+  #expensesReport td:first-child{font-weight:700!important}
+  #expensesReport td:nth-child(2)::before{content:'TTC : ';font-weight:800;color:var(--mut)}
+  #expensesReport td:nth-child(3)::before{content:'Budget : ';font-weight:800;color:var(--mut)}
+  #expensesReport td:nth-child(4)::before{content:'Reste disponible : ';font-weight:800;color:var(--mut)}
+  #expensesReport td:nth-child(5)::before{content:'Consommé : ';font-weight:800;color:var(--mut)}
+  #expensesReport td:empty{display:none!important}
+  #expensesReport tr[style*="background:#eef3fb"]{background:#eef3fb!important}
+  #expensesReportHeader{padding:4px 0 10px!important}
+  #expensesReportHeader strong:first-child{font-size:18px!important}
+}
+@media print{
+  #expensesReport table{display:table!important;width:100%!important}
+  #expensesReport thead{display:table-header-group!important}
+  #expensesReport tbody{display:table-row-group!important}
+  #expensesReport tr{display:table-row!important;border:0!important}
+  #expensesReport th,#expensesReport td{display:table-cell!important;width:auto!important;padding:8px!important;border-bottom:1px solid var(--line)!important}
+  #expensesReport td::before{content:none!important}
+}
 /* Mobile: keep bank amounts inside each movement card */
 @media(max-width:760px){
   #bankRows .ledgerCardTop{display:grid!important;grid-template-columns:minmax(0,1fr)!important;gap:8px!important}
