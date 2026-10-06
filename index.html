@@ -389,16 +389,16 @@ function expenseReportNormName(s){
  return String(s||"").normalize("NFD").replace(/[\u0300-\u036f]/g,"").replace(/[^a-z0-9]+/gi," ").trim().toLowerCase();
 }
 function expenseReportEntryLabel(e,c,root){
-  let party=String(e.third_party||"").replace(/\s+/g," ").trim();
-  let clean=expenseReportCleanText(e.label);
-  let catName=String(c?.name||"").trim(),rootName=String(root?.name||"").trim();
-  let detail="";
-  if(clean){
-    let nClean=expenseReportNormName(clean),nParty=expenseReportNormName(party);
-    let nCat=expenseReportNormName(catName),nRoot=expenseReportNormName(rootName);
-    if(nClean!==nParty&&nClean!==nCat&&nClean!==nRoot)detail=clean;
-  }
-  return [frDate(e.entry_date),e.piece_number,party,detail].filter(Boolean).join(" · ");
+ let party=String(e.third_party||"").trim();
+ let clean=expenseReportCleanText(e.label);
+ let catName=String(c?.name||"").trim();
+ let rootName=String(root?.name||"").trim();
+ let detail="";
+ if(clean && expenseReportNormName(clean)!==expenseReportNormName(party)) detail=clean;
+ else if(catName && expenseReportNormName(catName)!==expenseReportNormName(rootName)) detail=catName;
+ else if(catName) detail=catName;
+ let bits=[frDate(e.entry_date),e.piece_number,party,detail].filter(Boolean);
+ return bits.join(" · ");
 }
 function renderExpenseReport(){
  if(!$("expenseReportBody")||!fy)return;
@@ -413,18 +413,15 @@ function renderExpenseReport(){
  let html="";
  roots.forEach(root=>{
   let children=expenseCats.filter(c=>c.parent_id===root.id),ids=[root.id,...children.map(c=>c.id)],ge=valid.filter(e=>ids.includes(e.category_id)),budget=rootBudget(root),actual=ge.reduce((a,e)=>a+Number(e.amount||0),0);
-  if(!budget&&!actual)return;
-  let remain=budget-actual,pct=budget?actual/budget*100:0;
+  if(!budget&&!actual)return;let remain=budget-actual,pct=budget?actual/budget*100:0;
   html+=`<tr style="background:#eef3fb;font-weight:900"><td>${esc(root.name)}</td><td>${euro(actual)}</td><td>${euro(budget)}</td><td>${euro(remain)}</td><td>${budget?pct.toFixed(1).replace(".",",")+" %":"—"}</td></tr>`;
-  ge.filter(e=>e.category_id===root.id).sort((a,b)=>a.entry_date.localeCompare(b.entry_date)).forEach(e=>{
-   html+=`<tr><td style="padding-left:20px">${esc(expenseReportEntryLabel(e,root,root))}</td><td>${euro(e.amount)}</td><td></td><td></td><td></td></tr>`;
-  });
-  children.forEach(c=>{
-   let ce=ge.filter(e=>e.category_id===c.id).sort((a,b)=>a.entry_date.localeCompare(b.entry_date)),cb=Number(c.planned_amount||0),ca=ce.reduce((a,e)=>a+Number(e.amount||0),0);
-   if(!cb&&!ca)return;
-   let cr=cb-ca,cp=cb?ca/cb*100:0,sameAsRoot=expenseReportNormName(c.name)===expenseReportNormName(root.name);
-   if(!sameAsRoot)html+=`<tr style="font-weight:800"><td style="padding-left:20px">${esc(c.name)}</td><td>${euro(ca)}</td><td>${euro(cb)}</td><td>${euro(cr)}</td><td>${cb?cp.toFixed(1).replace(".",",")+" %":"—"}</td></tr>`;
-   ce.forEach(e=>html+=`<tr><td style="padding-left:${sameAsRoot?20:38}px">${esc(expenseReportEntryLabel(e,c,root))}</td><td>${euro(e.amount)}</td><td></td><td></td><td></td></tr>`);
+  let ordered=[...children];if(ge.some(e=>e.category_id===root.id))ordered.unshift(root);
+  ordered.forEach(c=>{
+   let ce=ge.filter(e=>e.category_id===c.id).sort((a,b)=>a.entry_date.localeCompare(b.entry_date)),cb=children.length?Number(c.planned_amount||0):(c.id===root.id?budget:0),ca=ce.reduce((a,e)=>a+Number(e.amount||0),0);
+   if(!cb&&!ca)return;let cr=cb-ca,cp=cb?ca/cb*100:0;
+   let sameAsRoot=c.id===root.id||expenseReportNormName(c.name)===expenseReportNormName(root.name);
+   if(children.length&&!sameAsRoot)html+=`<tr style="font-weight:800"><td style="padding-left:20px">${esc(c.name)}</td><td>${euro(ca)}</td><td>${euro(cb)}</td><td>${euro(cr)}</td><td>${cb?cp.toFixed(1).replace(".",",")+" %":"—"}</td></tr>`;
+   ce.forEach(e=>html+=`<tr><td style="padding-left:${children.length&&!sameAsRoot?38:20}px">${esc(expenseReportEntryLabel(e,c,root))}</td><td>${euro(e.amount)}</td><td></td><td></td><td></td></tr>`);
   });
  });
  html+=`<tr style="font-weight:950;border-top:2px solid #17223b"><td>TOTAL GÉNÉRAL</td><td>${euro(totalActual)}</td><td>${euro(totalBudget)}</td><td>${euro(totalRemaining)}</td><td>${totalBudget?totalPct.toFixed(1).replace(".",",")+" %":"—"}</td></tr>`;
@@ -727,7 +724,22 @@ function renderBank(){
  let matchedAmount=bankRows.filter(r=>r.status==="rapproche").reduce((a,r)=>a+Math.abs(Number(r.amount||0)),0),remainingAmount=bankRows.filter(r=>r.status!=="rapproche").reduce((a,r)=>a+Math.abs(Number(r.amount||0)),0);$("bankMonthAmounts").textContent=bankRows.length?`Montants rapprochés : ${euro(matchedAmount)} · À traiter : ${euro(remainingAmount)}`:"";
  let ms=$("bankMonthStatus");if(!bankRows.length){ms.textContent="À traiter";ms.className="bankStatus bank-no"}else if(remaining===0){ms.textContent="✅ Mois entièrement rapproché";ms.className="bankStatus bank-ok"}else if(ok>0){ms.textContent="🟠 Rapprochement en cours";ms.className="bankStatus bank-maybe"}else{ms.textContent="🔴 À rapprocher";ms.className="bankStatus bank-no"}
  $("bankRows").innerHTML=bankRows.length?bankRows.map((r,i)=>{let e=entries.find(x=>x.id===r.match),cls=r.status==="rapproche"?"bank-ok":r.status==="probable"?"bank-maybe":"bank-no",lab=r.status==="rapproche"?"Rapproché":r.status==="probable"?"À vérifier":"Non rapproché";return `<article class="ledgerCard"><div class="ledgerCardTop"><div><strong>${esc(r.label)}</strong><br><small>${esc(r.date)}</small></div><div class="ledgerCardAmount ${r.amount>=0?"green":"red"}">${r.amount>=0?"+ ":"− "}${euro(Math.abs(r.amount))}</div></div><div style="margin-top:10px"><span class="bankStatus ${cls}">${lab}</span>${e?`<div class="ledgerMeta">↔ ${esc(e.piece_number)} · ${esc(e.label)} · ${euro(e.amount)}</div>`:""}</div><label style="margin-top:10px">Rattacher à une écriture</label><select class="bankMatch" data-i="${i}"><option value="">Aucune</option>${entries.map(x=>`<option value="${x.id}" ${x.id===r.match?"selected":""}>${esc(x.piece_number)} · ${esc(x.label)} · ${euro(x.amount)}</option>`).join("")}</select>${!r.match&&["admin","tresorier"].includes(profile.role)?`<button class="btn primary bankCreate" data-i="${i}" style="margin-top:10px;width:100%">＋ Créer l’écriture</button>`:""}</article>`}).join(""):"Aucun relevé importé.";
- document.querySelectorAll(".bankMatch").forEach(s=>s.addEventListener("change",async()=>{let i=Number(s.dataset.i),r=bankRows[i];r.match=s.value||null;r.status=r.match?"rapproche":"non_rapproche";if(bankStatementId)await persistBankMatch(i);renderBank()}));
+ document.querySelectorAll(".bankMatch").forEach(s=>s.addEventListener("change",async()=>{
+  let i=Number(s.dataset.i),r=bankRows[i],newMatch=s.value||null,oldMatch=r.match||null;
+  if(newMatch){
+    let other=bankRows.findIndex((x,j)=>j!==i&&x.match===newMatch);
+    if(other!==-1){
+      let e=entries.find(x=>x.id===newMatch);
+      alert(`Cette écriture${e?` ${e.piece_number}`:""} est déjà rattachée à un autre mouvement bancaire.\n\nUn mouvement bancaire = une écriture comptable.`);
+      s.value=oldMatch||"";
+      return;
+    }
+  }
+  r.match=newMatch;
+  r.status=r.match?"rapproche":"non_rapproche";
+  if(bankStatementId)await persistBankMatch(i);
+  renderBank();
+}));
  document.querySelectorAll(".bankCreate").forEach(b=>b.addEventListener("click",()=>createFromBank(Number(b.dataset.i))));
  buildBankAssist();
 }
