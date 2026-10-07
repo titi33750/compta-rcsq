@@ -518,7 +518,16 @@ async function extractPdfText(file){
 }
 function parseSgPdfText(text){
  let t=text.replace(/\u00a0/g," ").replace(/[ \t]+/g," "),lines=t.split(/\r?\n/).map(x=>x.trim()).filter(Boolean);
- let money=s=>{let m=String(s).match(/([+-]?\s?\d{1,3}(?:[ .]\d{3})*,\d{2}|[+-]?\s?\d+,\d{2})\s*\*?\s*$/);return m?parseMoney(m[1]):null};
+ let money=s=>{
+   let str=String(s);
+   // SG/PDF.js peut coller au montant un identifiant numérique placé juste avant.
+   // On privilégie donc le DERNIER montant français plausible en fin de ligne.
+   let tail=str.match(/(\d{1,3}(?:[ .]\d{3})*|\d{1,6}),\d{2}\s*\*?\s*$/);
+   if(!tail)return null;
+   let raw=tail[0].replace(/\s*\*?\s*$/,"").trim();
+   let v=parseMoney(raw);
+   return Number.isFinite(v)?v:null;
+ };
  let openingLine=lines.find(x=>/SOLDE PR[ÉE]C[ÉE]DENT/i.test(x)),closingLine=lines.find(x=>/NOUVEAU SOLDE/i.test(x)),totLine=lines.find(x=>/TOTAUX DES MOUVEMENTS/i.test(x));
  let opening=openingLine?money(openingLine):null,closing=closingLine?money(closingLine):null;
  let totals=totLine?totLine.match(/(\d{1,3}(?:[ .]\d{3})*,\d{2}|\d+,\d{2})/g):null;
@@ -527,23 +536,15 @@ function parseSgPdfText(text){
  for(let line of lines){
    if(/^(Date Valeur|RELEV[ÉE] DE COMPTE|COMPTE D.ADMINISTRATION|suite >>>|N° ADEME|Société Générale|S\.A\. au capital|envoi n°|TOTAUX DES MOUVEMENTS|NOUVEAU SOLDE|SOLDE PR[ÉE]C[ÉE]DENT)/i.test(line))continue;
    let m=line.match(rx);
-   if(m){if(current)rows.push(current);current={id:"p"+rows.length,date:m[1],label:m[3],parts:[m[3]],amount:null,match:null,status:"non_rapproche"};let val=money(m[3]);if(val!==null){current.amount=val;current.parts=[m[3].replace(/([+-]?\s?\d{1,3}(?:[ .]\d{3})*,\d{2}|[+-]?\s?\d+,\d{2})\s*\*?\s*$/,"").trim()]};continue}
-   if(current){let val=money(line);if(val!==null&&current.amount===null){current.amount=val;let clean=line.replace(/([+-]?\s?\d{1,3}(?:[ .]\d{3})*,\d{2}|[+-]?\s?\d+,\d{2})\s*\*?\s*$/,"").trim();if(clean)current.parts.push(clean)}else current.parts.push(line)}
+   if(m){if(current)rows.push(current);current={id:"p"+rows.length,date:m[1],label:m[3],parts:[m[3]],amount:null,match:null,status:"non_rapproche"};let val=money(m[3]);if(val!==null){current.amount=val;current.parts=[m[3].replace(/(\d{1,3}(?:[ .]\d{3})*|\d{1,6}),\d{2}\s*\*?\s*$/,"").trim()]};continue}
+   if(current){let val=money(line);if(val!==null&&current.amount===null){current.amount=val;let clean=line.replace(/(\d{1,3}(?:[ .]\d{3})*|\d{1,6}),\d{2}\s*\*?\s*$/,"").trim();if(clean)current.parts.push(clean)}else current.parts.push(line)}
  }
  if(current)rows.push(current);
  rows=rows.filter(r=>r.amount!==null&&r.amount!==0).map(r=>{let lab=r.parts.join(" · ");let upper=norm(lab);let credit=/\bvir (inst )?re\b|\bvir recu\b|\bstripe\b|\bsumup\b/.test(upper);r.amount=credit?Math.abs(r.amount):-Math.abs(r.amount);r.label=lab;delete r.parts;return r});
  if(!rows.length)throw new Error("Aucun mouvement bancaire n’a été reconnu dans ce PDF.");
  return rows;
 }
-function entryUsedByOtherBankRow(entryId,currentIndex){return !!entryId&&bankRows.some((x,j)=>j!==currentIndex&&x.match===entryId)}
-function suggestBankMatches(){
- let reserved=new Set(bankRows.filter(r=>r.match).map(r=>r.match));
- bankRows.forEach((r,i)=>{
-  if(r.match)return;
-  let rd=isoGuess(r.date),c=entries.filter(e=>!reserved.has(e.id)).map(e=>{let expected=e.type==="recette"?Number(e.amount):-Number(e.amount),diff=Math.abs(expected-r.amount),days=Math.abs((new Date(e.entry_date)-new Date(rd))/86400000),score=(diff<0.01?100:diff<1?60:0)+(days===0?40:days<=3?20:0)+(norm(r.label).includes(norm(e.label).slice(0,8))?20:0);return{e,score}}).filter(x=>x.score>=80).sort((a,b)=>b.score-a.score);
-  if(c.length){r.match=c[0].e.id;r.status=c[0].score>=120?"rapproche":"probable";reserved.add(c[0].e.id)}
- });renderBank()
-}
+function suggestBankMatches(){bankRows.forEach(r=>{let rd=isoGuess(r.date),c=entries.map(e=>{let expected=e.type==="recette"?Number(e.amount):-Number(e.amount),diff=Math.abs(expected-r.amount),days=Math.abs((new Date(e.entry_date)-new Date(rd))/86400000),score=(diff<0.01?100:diff<1?60:0)+(days===0?40:days<=3?20:0)+(norm(r.label).includes(norm(e.label).slice(0,8))?20:0);return{e,score}}).filter(x=>x.score>=80).sort((a,b)=>b.score-a.score);if(c.length){r.match=c[0].e.id;r.status=c[0].score>=120?"rapproche":"probable"}});renderBank()}
 
 function bankPersonName(label){
   let raw=String(label||"").replace(/\s+/g," ").trim();
@@ -676,8 +677,8 @@ function renderBank(){
  $("bankMonthTotal").textContent=bankRows.length;$("bankMonthMatched").textContent=ok;$("bankMonthRemaining").textContent=remaining;$("bankMonthProgress").textContent=progress.toFixed(1).replace(".",",")+" %";$("bankMonthBar").style.width=Math.min(100,progress)+"%";
  let matchedAmount=bankRows.filter(r=>r.status==="rapproche").reduce((a,r)=>a+Math.abs(Number(r.amount||0)),0),remainingAmount=bankRows.filter(r=>r.status!=="rapproche").reduce((a,r)=>a+Math.abs(Number(r.amount||0)),0);$("bankMonthAmounts").textContent=bankRows.length?`Montants rapprochés : ${euro(matchedAmount)} · À traiter : ${euro(remainingAmount)}`:"";
  let ms=$("bankMonthStatus");if(!bankRows.length){ms.textContent="À traiter";ms.className="bankStatus bank-no"}else if(remaining===0){ms.textContent="✅ Mois entièrement rapproché";ms.className="bankStatus bank-ok"}else if(ok>0){ms.textContent="🟠 Rapprochement en cours";ms.className="bankStatus bank-maybe"}else{ms.textContent="🔴 À rapprocher";ms.className="bankStatus bank-no"}
- $("bankRows").innerHTML=bankRows.length?bankRows.map((r,i)=>{let e=entries.find(x=>x.id===r.match),cls=r.status==="rapproche"?"bank-ok":r.status==="probable"?"bank-maybe":"bank-no",lab=r.status==="rapproche"?"Rapproché":r.status==="probable"?"À vérifier":"Non rapproché";return `<article class="ledgerCard"><div class="ledgerCardTop"><div><strong>${esc(r.label)}</strong><br><small>${esc(r.date)}</small></div><div class="ledgerCardAmount ${r.amount>=0?"green":"red"}">${r.amount>=0?"+ ":"− "}${euro(Math.abs(r.amount))}</div></div><div style="margin-top:10px"><span class="bankStatus ${cls}">${lab}</span>${e?`<div class="ledgerMeta">↔ ${esc(e.piece_number)} · ${esc(e.label)} · ${euro(e.amount)}</div>`:""}</div><label style="margin-top:10px">Rattacher à une écriture</label><select class="bankMatch" data-i="${i}"><option value="">Aucune</option>${entries.filter(x=>x.id===r.match||!entryUsedByOtherBankRow(x.id,i)).map(x=>`<option value="${x.id}" ${x.id===r.match?"selected":""}>${esc(x.piece_number)} · ${esc(x.label)} · ${euro(x.amount)}</option>`).join("")}</select>${!r.match&&["admin","tresorier"].includes(profile.role)?`<button class="btn primary bankCreate" data-i="${i}" style="margin-top:10px;width:100%">＋ Créer l’écriture</button>`:""}</article>`}).join(""):"Aucun relevé importé.";
- document.querySelectorAll(".bankMatch").forEach(s=>s.addEventListener("change",async()=>{let i=Number(s.dataset.i),r=bankRows[i],oldMatch=r.match,oldStatus=r.status,next=s.value||null;if(next&&entryUsedByOtherBankRow(next,i)){alert("Cette écriture est déjà rattachée à un autre mouvement bancaire. Choisis une autre écriture.");renderBank();return}r.match=next;r.status=r.match?"rapproche":"non_rapproche";if(bankStatementId){let ok=await persistBankMatch(i);if(!ok){r.match=oldMatch;r.status=oldStatus}}renderBank()}));
+ $("bankRows").innerHTML=bankRows.length?bankRows.map((r,i)=>{let e=entries.find(x=>x.id===r.match),cls=r.status==="rapproche"?"bank-ok":r.status==="probable"?"bank-maybe":"bank-no",lab=r.status==="rapproche"?"Rapproché":r.status==="probable"?"À vérifier":"Non rapproché";return `<article class="ledgerCard"><div class="ledgerCardTop"><div><strong>${esc(r.label)}</strong><br><small>${esc(r.date)}</small></div><div class="ledgerCardAmount ${r.amount>=0?"green":"red"}">${r.amount>=0?"+ ":"− "}${euro(Math.abs(r.amount))}</div></div><div style="margin-top:10px"><span class="bankStatus ${cls}">${lab}</span>${e?`<div class="ledgerMeta">↔ ${esc(e.piece_number)} · ${esc(e.label)} · ${euro(e.amount)}</div>`:""}</div><label style="margin-top:10px">Rattacher à une écriture</label><select class="bankMatch" data-i="${i}"><option value="">Aucune</option>${entries.map(x=>`<option value="${x.id}" ${x.id===r.match?"selected":""}>${esc(x.piece_number)} · ${esc(x.label)} · ${euro(x.amount)}</option>`).join("")}</select>${!r.match&&["admin","tresorier"].includes(profile.role)?`<button class="btn primary bankCreate" data-i="${i}" style="margin-top:10px;width:100%">＋ Créer l’écriture</button>`:""}</article>`}).join(""):"Aucun relevé importé.";
+ document.querySelectorAll(".bankMatch").forEach(s=>s.addEventListener("change",async()=>{let i=Number(s.dataset.i),r=bankRows[i];r.match=s.value||null;r.status=r.match?"rapproche":"non_rapproche";if(bankStatementId)await persistBankMatch(i);renderBank()}));
  document.querySelectorAll(".bankCreate").forEach(b=>b.addEventListener("click",()=>createFromBank(Number(b.dataset.i))));
  buildBankAssist();
 }
@@ -755,17 +756,12 @@ async function loadSharedBank(){
  $("bankFile").value="";$("bankNotice").textContent="Relevé partagé chargé ✅";$("bankNotice").className="notice ok";renderBank();
 }
 async function persistBankMatch(i){
- if(!bankStatementId)return true;
- let r=bankRows[i];if(!r)return false;
- if(r.match){
-  let {data:used,error:ue}=await sb.from("bank_transactions").select("id,transaction_date").eq("matched_entry_id",r.match).neq("id",r.id).limit(1);
-  if(ue){$("bankNotice").textContent="Contrôle anti-doublon impossible : "+ue.message;$("bankNotice").className="notice err";return false}
-  if(used&&used.length){$("bankNotice").textContent="⛔ Cette écriture est déjà utilisée par un autre mouvement bancaire.";$("bankNotice").className="notice err";alert("Cette écriture est déjà rattachée à un autre mouvement bancaire. Le rapprochement a été refusé.");return false}
- }
+ if(!bankStatementId)return;
+ let r=bankRows[i];if(!r)return;
  let payload={matched_entry_id:r.match||null,reconciliation_status:r.status,reconciled_by:r.match?user.id:null,reconciled_at:r.match?new Date().toISOString():null};
  let {error}=await sb.from("bank_transactions").update(payload).eq("id",r.id);
- if(error){$("bankNotice").textContent="Rapprochement non synchronisé : "+error.message;$("bankNotice").className="notice err";return false}
- $("bankNotice").textContent="Rapprochement synchronisé ☁️";$("bankNotice").className="notice ok";return true
+ if(error){$("bankNotice").textContent="Rapprochement non synchronisé : "+error.message;$("bankNotice").className="notice err"}
+ else{$("bankNotice").textContent="Rapprochement synchronisé ☁️";$("bankNotice").className="notice ok"}
 }
 
 
