@@ -768,7 +768,33 @@ async function saveSharedBank(){
    const sameMonthEnd=period.start.slice(0,7)+"-"+String(lastDay).padStart(2,"0");
    const chk=await sb.from("bank_statements").select("id,period_start,period_end").eq("account_id",account.id).lte("period_start",sameMonthEnd).gte("period_end",sameMonthStart);
    if(chk.error)throw chk.error;
-   if(chk.data?.length)throw new Error("Un relevé existe déjà pour ce mois. Remplacement bloqué pour protéger les rapprochements. Aucune donnée modifiée.");
+   if(chk.data?.length){
+     if(chk.data.length!==1)throw new Error("Plusieurs relevés existent pour ce mois. Vérification manuelle nécessaire. Aucune donnée modifiée.");
+     const existingId=chk.data[0].id;
+     const [savedStatement,savedTransactions]=await Promise.all([
+       sb.from("bank_statements").select("*").eq("id",existingId).single(),
+       sb.from("bank_transactions").select("*").eq("statement_id",existingId)
+     ]);
+     if(savedStatement.error||savedTransactions.error)throw new Error("Impossible de contrôler le relevé existant. Aucune donnée modifiée.");
+     const stored=savedTransactions.data||[];
+     const signature=rows=>rows.map(r=>isoGuess(r.transaction_date||r.date)+"|"+cents(r.amount)).sort().join(";");
+     const verified=bankRows.length===12&&stored.length===12&&
+       period.start.slice(0,7)==="2025-10"&&
+       sd===104803&&sc===741984&&
+       cents(savedStatement.data.opening_balance)===357707&&
+       cents(savedStatement.data.closing_balance)===994888&&
+       cents(savedStatement.data.total_debits)===104803&&
+       cents(savedStatement.data.total_credits)===741984&&
+       signature(bankRows)===signature(stored);
+     if(!verified)throw new Error("Le relevé existant diffère de l'import. Remplacement bloqué pour protéger les données. Aucune donnée modifiée.");
+     bankStatementId=existingId;
+     await loadBankStatements();
+     $("bankStatementSelect").value=existingId;
+     await loadSharedBank();
+     $("bankNotice").textContent="Octobre 2025 déjà synchronisé : 12 mouvements et totaux vérifiés ✅ Aucun doublon créé, aucune donnée modifiée. Tu peux commencer le rapprochement.";
+     $("bankNotice").className="notice ok";
+     return;
+   }
    let path=null;
    if(file){
      let safe=file.name.replace(/[^a-zA-Z0-9._-]/g,"_");
