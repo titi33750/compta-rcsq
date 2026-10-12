@@ -531,7 +531,7 @@ async function extractPdfText(file){
     // Une somme n'est reconnue que dans les colonnes monétaires du relevé SG.
     // Les références d'opération restent du texte, même si elles sont numériques.
     if(it.x>=430){
-     const m=z.match(/(?:^|\s|\+)\s*(\d{1,3}(?:[ .]\d{3})*,\d{2}|\d+,\d{2})\s*\*?\s*$/);
+     const m=z.match(/^\s*\+?\s*(\d{1,3}(?:[ .]\d{3})*,\d{2}|\d+,\d{2})\s*\*?\s*$/);
      if(m){const side=it.x>=505?"C":"D";parts.push("[["+side+":"+m[1]+"]]");continue}
     }
     parts.push(z);
@@ -564,6 +564,7 @@ function parseSgPdfText(text){
  if(current)rows.push(current);
  rows=rows.filter(r=>r.amount!==null&&r.amount!==0).map(r=>{r.label=r.parts.join(" · ");delete r.parts;return r});
  if(!rows.length)throw new Error("Aucun mouvement bancaire reconnu dans ce PDF.");
+ if(/SOLDE PR[ÉE]C[ÉE]DENT AU 31\/10\/2025/i.test(text)&&rows.length!==20)throw new Error("Novembre 2025 : 20 mouvements attendus, "+rows.length+" trouvés. Import refusé.");
  const cents=n=>Math.round(Number(n||0)*100);
  const sumD=rows.filter(r=>r.amount<0).reduce((v,r)=>v-cents(r.amount),0);
  const sumC=rows.filter(r=>r.amount>0).reduce((v,r)=>v+cents(r.amount),0);
