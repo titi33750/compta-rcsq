@@ -136,7 +136,7 @@ table{width:100%;border-collapse:collapse;font-size:14px}th,td{text-align:left;p
 <select id="bankStatementSelect"><option value="">Aucun relevé enregistré</option></select>
 <div class="row" style="margin-top:10px"><button id="bankLoadBtn" class="btn light">🔄 Charger le relevé partagé</button><button id="bankSaveBtn" class="btn primary">☁️ Enregistrer / synchroniser</button></div>
 </div>
-<div class="row" style="margin-top:12px"><button id="bankRepairOctober" class="btn light" type="button">🛠️ Réparer octobre 2025 (après import CSV vérifié)</button></div>
+<div class="row" style="margin-top:12px"><button id="bankRepairOctober" class="btn light" type="button">🛠️ Corriger octobre 2025 en un clic</button></div>
 <div id="bankNotice" class="notice">CSV : import direct. PDF : lecture locale du relevé dans ton navigateur, sans envoi vers GitHub.</div>
 <div id="bankControl" class="grid" style="margin-top:14px">
  <div class="stat"><span>Solde précédent</span><strong id="bankOpening">—</strong></div>
@@ -817,8 +817,6 @@ async function saveSharedBank(){
 // Réparation ponctuelle et conservatrice : ne modifie que les montants des 12 mouvements existants.
 async function repairOctoberFromCsv(){
  if(!["admin","tresorier"].includes(profile?.role))return alert("Réservé à l’administrateur et au trésorier.");
- const f=$("bankFile").files[0];
- if(!f||!/\.csv$/i.test(f.name))return alert("Sélectionne d’abord le CSV vérifié d’octobre 2025 et clique sur Importer le relevé.");
  const expected=[
   ["2025-10-06",59.14,/VIR INST RE|SUMUP/i],
   ["2025-10-06",-16.50,/CANAL|PRELEVEMENT EUROPEEN 0328506564/i],
@@ -835,9 +833,6 @@ async function repairOctoberFromCsv(){
  ];
  const cents=v=>Math.round(Number(v)*100);
  const sum=xs=>xs.reduce((a,v)=>a+cents(v),0);
- const csvRows=parseBankCsv(await f.text());
- if(csvRows.length!==12||csvRows.some((r,i)=>isoGuess(r.date)!==expected[i][0]||cents(r.amount)!==cents(expected[i][1]))||sum(csvRows.filter(r=>r.amount>0).map(r=>r.amount))!==741984||sum(csvRows.filter(r=>r.amount<0).map(r=>-r.amount))!==104803)
-  return alert("Le CSV ne correspond pas exactement aux 12 mouvements attendus. Réparation refusée.");
  const account=accounts.find(a=>a.type==="banque")||accounts[0];
  if(!account)return alert("Compte bancaire introuvable.");
  const stRes=await sb.from("bank_statements").select("*").eq("account_id",account.id).lte("period_start","2025-10-31").gte("period_end","2025-10-01");
@@ -849,7 +844,7 @@ async function repairOctoberFromCsv(){
  const txRes=await sb.from("bank_transactions").select("*").eq("statement_id",st.id);
  if(txRes.error)return alert("Lecture des mouvements impossible : "+txRes.error.message);
  const tx=txRes.data||[];
- if(tx.length!==12||tx.some(r=>r.matched_entry_id||r.reconciliation_status==="rapproche"))return alert("Le relevé doit contenir 12 mouvements tous non rapprochés. Réparation refusée.");
+ if(tx.length!==12)return alert("Le relevé doit contenir exactement 12 mouvements. Réparation refusée.");
  const used=new Set(),pairs=[];
  for(const [date,amount,pattern] of expected){
   const found=tx.filter(r=>r.transaction_date===date&&pattern.test(r.label||"")&&!used.has(r.id));
@@ -857,9 +852,15 @@ async function repairOctoberFromCsv(){
   used.add(found[0].id);pairs.push({row:found[0],amount});
  }
  if(used.size!==12)return alert("Correspondance incomplète. Réparation refusée.");
+ // Les mouvements déjà rapprochés sont conservés, à condition que leur montant soit exact.
+ const linked=pairs.filter(p=>p.row.matched_entry_id||p.row.reconciliation_status==="rapproche");
+ if(linked.some(p=>cents(p.row.amount)!==cents(p.amount)))return alert("Un mouvement déjà rapproché a un montant erroné. Réparation bloquée pour protéger l’écriture associée.");
  const changed=pairs.filter(p=>cents(p.row.amount)!==cents(p.amount));
- if(!changed.length)return alert("Les 12 montants sont déjà corrects. Aucune modification nécessaire.");
- if(!confirm("Réparer uniquement "+changed.length+" montant(s) erroné(s) d’octobre 2025 ? Les identifiants, les libellés, les écritures et les autres mois seront conservés."))return;
+ if(!changed.length){
+   await loadBankStatements();$("bankStatementSelect").value=st.id;await loadSharedBank();
+   return alert("Les 12 montants sont déjà corrects. Le rapprochement existant est conservé.");
+ }
+ if(!confirm("Corriger "+changed.length+" montant(s) erroné(s) d’octobre 2025 ? Les rapprochements existants et les autres mois seront conservés."))return;
  const btn=$("bankRepairOctober");btn.disabled=true;
  try{
   for(const p of changed){
