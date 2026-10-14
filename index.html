@@ -144,7 +144,7 @@ table{width:100%;border-collapse:collapse;font-size:14px}th,td{text-align:left;p
  <button id="bankBatchRun" class="btn primary" type="button" style="margin-top:12px;width:100%">🔎 Contrôler tous les relevés</button>
  <div id="bankBatchStatus" class="notice">Aucune modification automatique des données.</div>
  <div id="bankBatchResults" class="tablewrap"></div>
- <button id="bankBatchExport" class="btn light hidden" type="button" style="margin-top:10px">Exporter le diagnostic CSV</button>
+ <div class="row" style="margin-top:10px"><button id="bankBatchShare" class="btn primary hidden" type="button">📤 Partager le diagnostic</button><button id="bankBatchExport" class="btn light hidden" type="button">Exporter le diagnostic CSV</button></div><div id="bankBatchShareStatus" class="notice hidden" aria-live="polite"></div>
 </div>
 <div id="bankNotice" class="notice">V2 : contrôle des totaux PDF et rapprochement uniquement après enregistrement du relevé. Les montants doivent être vérifiés avec le PDF original.</div>
 <div id="bankControl" class="grid" style="margin-top:14px">
@@ -1036,13 +1036,35 @@ async function runBatchAudit(){
  }catch(e){status.textContent="Contrôle interrompu : "+e.message;status.className="notice err";}
  finally{bankMeta=oldMeta;button.disabled=false;}
 }
-function exportBatchAudit(){
+function batchAuditCsvText(){
  const rows=[["Fichier","Mois","PDF","Supabase","Mouvements PDF","Mouvements Supabase","Écarts","Diagnostic"],...batchAuditResults.map(r=>[r.file,r.month,r.pdf,r.database,r.pdfCount,r.dbCount,r.errors,r.detail])];
- const txt="\ufeff"+rows.map(row=>row.map(v=>'"'+String(v??"").replaceAll('"','""')+'"').join(";")).join("\r\n");
- const url=URL.createObjectURL(new Blob([txt],{type:"text/csv;charset=utf-8"})),a=document.createElement("a");a.href=url;a.download="diagnostic-bancaire-rcsq.csv";a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);
+ return "\ufeff"+rows.map(row=>row.map(v=>'"'+String(v??"").replaceAll('"','""')+'"').join(";")).join("\r\n");
+}
+function batchAuditText(){
+ return "DIAGNOSTIC BANCAIRE RCSQ\n"+batchAuditResults.map(r=>`${r.month} | ${r.file}\nPDF : ${r.pdf} (${r.pdfCount} mouvements)\nSupabase : ${r.database} (${r.dbCount} mouvements)\nÉcarts : ${r.errors}\n${r.detail}`).join("\n\n");
+}
+function auditShareMessage(msg,error=false){let el=$("bankBatchShareStatus");el.textContent=msg;el.className="notice "+(error?"err":"ok");}
+async function shareBatchAudit(){
+ if(!batchAuditResults.length)return auditShareMessage("Lance d’abord le contrôle des relevés.",true);
+ const file=new File([batchAuditCsvText()],"diagnostic-bancaire-rcsq.csv",{type:"text/csv"});
+ try{
+   if(navigator.share&&navigator.canShare?.({files:[file]})){
+     await navigator.share({files:[file],title:"Diagnostic bancaire RCSQ"});
+     auditShareMessage("Diagnostic transmis à la fenêtre de partage de l’iPhone.");return;
+   }
+   if(navigator.share){await navigator.share({title:"Diagnostic bancaire RCSQ",text:batchAuditText()});auditShareMessage("Diagnostic transmis à la fenêtre de partage.");return;}
+   if(navigator.clipboard?.writeText){await navigator.clipboard.writeText(batchAuditText());auditShareMessage("Diagnostic copié. Colle-le dans notre conversation.");return;}
+   auditShareMessage("Le partage n’est pas disponible sur ce navigateur. Le diagnostic reste visible ci-dessus.",true);
+ }catch(e){if(e?.name!=="AbortError")auditShareMessage("Partage impossible : "+(e.message||String(e)),true);}
+}
+function exportBatchAudit(){
+ if(!batchAuditResults.length)return auditShareMessage("Lance d’abord le contrôle des relevés.",true);
+ const url=URL.createObjectURL(new Blob([batchAuditCsvText()],{type:"text/csv;charset=utf-8"})),a=document.createElement("a");
+ a.href=url;a.download="diagnostic-bancaire-rcsq.csv";document.body.appendChild(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(url),30000);
+ auditShareMessage("Téléchargement demandé. Sur iPhone, utilise plutôt « Partager le diagnostic » si aucun fichier n’apparaît.");
 }
 $("bankBatchRun").addEventListener("click",runBatchAudit);
-$("bankBatchExport").addEventListener("click",exportBatchAudit);
+$("bankBatchExport").addEventListener("click",exportBatchAudit);$("bankBatchShare").addEventListener("click",shareBatchAudit);
 function csv(){let rows=[["Pièce","Date","Type","Libellé","Tiers","Catégorie","Compte","Montant","Statut"],...entries.map(e=>[e.piece_number,e.entry_date,e.type,e.label,e.third_party||"",catName(e.category_id),accName(e.account_id),e.amount,e.status])];let s=rows.map(r=>r.map(v=>'"'+String(v).replaceAll('"','""')+'"').join(";")).join("\n"),blob=new Blob(["\ufeff"+s],{type:"text/csv;charset=utf-8"}),a=document.createElement("a");a.href=URL.createObjectURL(blob);a.download="livre-comptes-"+(fy?.label||"RCSQ")+".csv";a.click();setTimeout(()=>URL.revokeObjectURL(a.href),1000)}
 function esc(s){return String(s??"").replace(/[&<>"']/g,m=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[m]))}
 $("togglePassword").addEventListener("click",togglePassword);$("forgotPassword").addEventListener("click",forgotPassword);$("loginBtn").addEventListener("click",login);$("signupBtn").addEventListener("click",signup);$("logoutBtn").addEventListener("click",async()=>{await sb.auth.signOut();location.reload()});
