@@ -137,6 +137,15 @@ table{width:100%;border-collapse:collapse;font-size:14px}th,td{text-align:left;p
 <div class="row" style="margin-top:10px"><button id="bankLoadBtn" class="btn light">🔄 Charger le relevé partagé</button><button id="bankSaveBtn" class="btn primary">☁️ Enregistrer / synchroniser</button></div>
 </div>
 <div class="row hidden" style="margin-top:12px"><button id="bankRepairOctober" class="btn light" type="button">🛠️ Corriger octobre 2025 en un clic</button></div>
+<div class="card" id="bankBatchAudit" style="margin-top:16px;border:2px solid #dce3ef">
+ <h3>🛡️ Contrôle global des relevés (V2)</h3>
+ <p>Choisis plusieurs PDF Société Générale. Le contrôle compare chaque PDF aux données Supabase sans rien modifier.</p>
+ <label for="bankBatchFiles">Relevés PDF à vérifier</label><input id="bankBatchFiles" type="file" accept=".pdf,application/pdf" multiple>
+ <button id="bankBatchRun" class="btn primary" type="button" style="margin-top:12px;width:100%">🔎 Contrôler tous les relevés</button>
+ <div id="bankBatchStatus" class="notice">Aucune modification automatique des données.</div>
+ <div id="bankBatchResults" class="tablewrap"></div>
+ <button id="bankBatchExport" class="btn light hidden" type="button" style="margin-top:10px">Exporter le diagnostic CSV</button>
+</div>
 <div id="bankNotice" class="notice">V2 : contrôle des totaux PDF et rapprochement uniquement après enregistrement du relevé. Les montants doivent être vérifiés avec le PDF original.</div>
 <div id="bankControl" class="grid" style="margin-top:14px">
  <div class="stat"><span>Solde précédent</span><strong id="bankOpening">—</strong></div>
@@ -975,6 +984,65 @@ async function saveUserRole(id){
  await loadUsers();
 }
 
+let batchAuditResults=[];
+async function runBatchAudit(){
+ const files=[...$("bankBatchFiles").files];if(!files.length)return alert("Sélectionne au moins un relevé PDF.");
+ if(!["admin","tresorier"].includes(profile?.role))return alert("Contrôle réservé à l'administrateur et au trésorier.");
+ const button=$("bankBatchRun"),status=$("bankBatchStatus");button.disabled=true;batchAuditResults=[];
+ // Le parseur historique utilise bankMeta : sauvegarde puis restauration systématique.
+ const oldMeta={...bankMeta};
+ try{
+  const account=accounts.find(a=>a.type==="banque")||accounts[0];
+  if(!account)throw new Error("Compte bancaire non configuré.");
+  for(let n=0;n<files.length;n++){
+   const file=files[n];status.textContent=`Analyse ${n+1}/${files.length} : ${file.name}`;
+   const result={file:file.name,month:"—",pdf:"Erreur",database:"Non vérifié",pdfCount:0,dbCount:0,errors:0,detail:""};
+   try{
+    if(!/\.pdf$/i.test(file.name))throw new Error("Seuls les PDF sont acceptés.");
+    const text=await extractPdfText(file),rows=parseSgPdfText(text),meta={...bankMeta};
+    result.pdf="Conforme";result.pdfCount=rows.length;
+    const dates=rows.map(r=>isoGuess(r.date)).sort(),month=dates[0]?.slice(0,7);
+    if(!month||dates.some(d=>d.slice(0,7)!==month))throw new Error("Opérations réparties sur plusieurs mois : contrôle manuel nécessaire.");
+    result.month=month;
+    const start=month+"-01",end=month+"-"+String(new Date(+month.slice(0,4),+month.slice(5,7),0).getDate()).padStart(2,"0");
+    const st=await sb.from("bank_statements").select("*").eq("account_id",account.id).lte("period_start",end).gte("period_end",start);
+    if(st.error)throw st.error;
+    if(!st.data?.length){result.database="Absent";result.detail="Aucun relevé partagé enregistré.";}
+    else if(st.data.length!==1){result.database="À vérifier";result.detail="Plusieurs relevés enregistrés pour ce mois.";}
+    else{
+     const saved=st.data[0],tx=await sb.from("bank_transactions").select("*").eq("statement_id",saved.id);
+     if(tx.error)throw tx.error;
+     const stored=tx.data||[];result.dbCount=stored.length;
+     const cents=v=>Math.round(Number(v||0)*100);
+     const d=stored.filter(r=>Number(r.amount)<0).reduce((a,r)=>a-cents(r.amount),0),c=stored.filter(r=>Number(r.amount)>0).reduce((a,r)=>a+cents(r.amount),0);
+     const summaryOk=cents(saved.opening_balance)===cents(meta.opening)&&cents(saved.closing_balance)===cents(meta.closing)&&cents(saved.total_debits)===cents(meta.debits)&&cents(saved.total_credits)===cents(meta.credits);
+     // Comparaison multiensemble : conserve les opérations identiques répétées.
+     const sig=r=>isoGuess(r.transaction_date||r.date)+"|"+cents(r.amount);
+     const expected=new Map();rows.forEach(r=>expected.set(sig(r),(expected.get(sig(r))||0)+1));
+     let matches=0;stored.forEach(r=>{let k=sig(r),count=expected.get(k)||0;if(count){matches++;expected.set(k,count-1);}});
+     result.errors=Math.max(rows.length,stored.length)-matches;
+     const linkedWrong=stored.filter(r=>r.matched_entry_id&& !rows.some(x=>isoGuess(x.date)===r.transaction_date&&cents(x.amount)===cents(r.amount))).length;
+     result.database=summaryOk&&d===cents(meta.debits)&&c===cents(meta.credits)&&result.errors===0?"Conforme":"Écarts détectés";
+     result.detail=`${result.errors} montant(s)/date(s) non concordant(s). ${linkedWrong} mouvement(s) rapproché(s) à examiner. ${summaryOk?"En-tête conforme.":"En-tête différent."}`;
+    }
+   }catch(e){result.detail=e.message||String(e);}
+   batchAuditResults.push(result);
+  }
+  $("bankBatchResults").innerHTML='<table><thead><tr><th>Fichier</th><th>Mois</th><th>PDF</th><th>Supabase</th><th>PDF / enregistrés</th><th>Diagnostic</th></tr></thead><tbody>'+batchAuditResults.map(r=>`<tr><td>${esc(r.file)}</td><td>${esc(r.month)}</td><td>${esc(r.pdf)}</td><td><strong>${esc(r.database)}</strong></td><td>${r.pdfCount} / ${r.dbCount}</td><td>${esc(r.detail)}</td></tr>`).join("")+"</tbody></table>";
+  const good=batchAuditResults.filter(r=>r.database==="Conforme").length;
+  status.textContent=`${files.length} relevé(s) analysé(s), ${good} conforme(s). Diagnostic uniquement : aucune donnée modifiée.`;
+  status.className="notice "+(good===files.length?"ok":"err");
+  $("bankBatchExport").classList.remove("hidden");
+ }catch(e){status.textContent="Contrôle interrompu : "+e.message;status.className="notice err";}
+ finally{bankMeta=oldMeta;button.disabled=false;}
+}
+function exportBatchAudit(){
+ const rows=[["Fichier","Mois","PDF","Supabase","Mouvements PDF","Mouvements Supabase","Écarts","Diagnostic"],...batchAuditResults.map(r=>[r.file,r.month,r.pdf,r.database,r.pdfCount,r.dbCount,r.errors,r.detail])];
+ const txt="\ufeff"+rows.map(row=>row.map(v=>'"'+String(v??"").replaceAll('"','""')+'"').join(";")).join("\r\n");
+ const url=URL.createObjectURL(new Blob([txt],{type:"text/csv;charset=utf-8"})),a=document.createElement("a");a.href=url;a.download="diagnostic-bancaire-rcsq.csv";a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);
+}
+$("bankBatchRun").addEventListener("click",runBatchAudit);
+$("bankBatchExport").addEventListener("click",exportBatchAudit);
 function csv(){let rows=[["Pièce","Date","Type","Libellé","Tiers","Catégorie","Compte","Montant","Statut"],...entries.map(e=>[e.piece_number,e.entry_date,e.type,e.label,e.third_party||"",catName(e.category_id),accName(e.account_id),e.amount,e.status])];let s=rows.map(r=>r.map(v=>'"'+String(v).replaceAll('"','""')+'"').join(";")).join("\n"),blob=new Blob(["\ufeff"+s],{type:"text/csv;charset=utf-8"}),a=document.createElement("a");a.href=URL.createObjectURL(blob);a.download="livre-comptes-"+(fy?.label||"RCSQ")+".csv";a.click();setTimeout(()=>URL.revokeObjectURL(a.href),1000)}
 function esc(s){return String(s??"").replace(/[&<>"']/g,m=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[m]))}
 $("togglePassword").addEventListener("click",togglePassword);$("forgotPassword").addEventListener("click",forgotPassword);$("loginBtn").addEventListener("click",login);$("signupBtn").addEventListener("click",signup);$("logoutBtn").addEventListener("click",async()=>{await sb.auth.signOut();location.reload()});
