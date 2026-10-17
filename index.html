@@ -997,7 +997,7 @@ async function runBatchAudit(){
   if(!account)throw new Error("Compte bancaire non configuré.");
   for(let n=0;n<files.length;n++){
    const file=files[n];status.textContent=`Analyse ${n+1}/${files.length} : ${file.name}`;
-   const result={file:file.name,month:"—",pdf:"Erreur",database:"Non vérifié",pdfCount:0,dbCount:0,errors:0,detail:""};
+   const result={file:file.name,month:"—",pdf:"Erreur",database:"Non vérifié",pdfCount:0,dbCount:0,errors:0,detail:"",differences:[]};
    try{
     if(!/\.pdf$/i.test(file.name))throw new Error("Seuls les PDF sont acceptés.");
     const text=await extractPdfText(file),rows=parseSgPdfText(text),meta={...bankMeta};
@@ -1025,6 +1025,27 @@ async function runBatchAudit(){
      const expected=new Map();rows.forEach(r=>expected.set(sig(r),(expected.get(sig(r))||0)+1));
      let matches=0;stored.forEach(r=>{let k=sig(r),count=expected.get(k)||0;if(count){matches++;expected.set(k,count-1);}});
      result.errors=Math.max(rows.length,stored.length)-matches;
+     // Isoler les occurrences identiques avant de présenter les écarts.
+     // Un appariement incertain est présenté côte à côte, jamais traité comme une correction certaine.
+     const pdfRemaining=[...rows],dbRemaining=[...stored];
+     for(let i=pdfRemaining.length-1;i>=0;i--){
+       const j=dbRemaining.findIndex(r=>sig(r)===sig(pdfRemaining[i]));
+       if(j>=0){pdfRemaining.splice(i,1);dbRemaining.splice(j,1);}
+     }
+     const labelWords=v=>norm(v||"").split(/[^a-z0-9]+/).filter(w=>w.length>=4);
+     const similarity=(a,b)=>{const wa=labelWords(a),wb=new Set(labelWords(b));return wa.length?wa.filter(w=>wb.has(w)).length/wa.length:0};
+     // Préférer la même date et les libellés proches, sans masquer les ambiguïtés.
+     while(pdfRemaining.length){
+       const pdf=pdfRemaining.shift();let best=-1,bestScore=-1;
+       dbRemaining.forEach((db,j)=>{
+         const sameDate=isoGuess(pdf.date)===isoGuess(db.transaction_date);
+         const score=(sameDate?10:0)+similarity(pdf.label,db.label)*5;
+         if(score>bestScore){bestScore=score;best=j;}
+       });
+       const db=best>=0?dbRemaining.splice(best,1)[0]:null;
+       result.differences.push({pdfDate:isoGuess(pdf.date),pdfAmount:pdf.amount,pdfLabel:pdf.label,dbDate:db?.transaction_date||"",dbAmount:db?.amount??null,dbLabel:db?.label||"",linked:!!db?.matched_entry_id,uncertain:bestScore<10||dbRemaining.some(x=>isoGuess(x.transaction_date)===isoGuess(pdf.date))});
+     }
+     dbRemaining.forEach(db=>result.differences.push({pdfDate:"",pdfAmount:null,pdfLabel:"",dbDate:db.transaction_date,dbAmount:db.amount,dbLabel:db.label,linked:!!db.matched_entry_id,uncertain:true}));
      const linkedWrong=stored.filter(r=>r.matched_entry_id&& !rows.some(x=>isoGuess(x.date)===r.transaction_date&&cents(x.amount)===cents(r.amount))).length;
      result.database=summaryOk&&d===cents(meta.debits)&&c===cents(meta.credits)&&result.errors===0?"Conforme":"Écarts détectés";
      result.detail=`${result.errors} montant(s)/date(s) non concordant(s). ${linkedWrong} mouvement(s) rapproché(s) à examiner. ${summaryOk?"En-tête conforme.":"En-tête différent."}`;
@@ -1033,6 +1054,10 @@ async function runBatchAudit(){
    batchAuditResults.push(result);
   }
   $("bankBatchResults").innerHTML='<table><thead><tr><th>Fichier</th><th>Mois</th><th>PDF</th><th>Supabase</th><th>PDF / enregistrés</th><th>Diagnostic</th></tr></thead><tbody>'+batchAuditResults.map(r=>`<tr><td>${esc(r.file)}</td><td>${esc(r.month)}</td><td>${esc(r.pdf)}</td><td><strong>${esc(r.database)}</strong></td><td>${r.pdfCount} / ${r.dbCount}</td><td>${esc(r.detail)}</td></tr>`).join("")+"</tbody></table>";
+  // Diagnostic détaillé consultable sans modification des données.
+  const detailRows=batchAuditResults.filter(r=>r.differences?.length);
+  const detailed=detailRows.map(r=>`<details style="margin-top:12px;border:1px solid #dce3ef;border-radius:12px;padding:12px"><summary style="cursor:pointer;font-weight:800">🔎 ${esc(r.month)} · ${r.differences.length} ligne(s) à examiner</summary><div class="tablewrap" style="margin-top:12px"><table><thead><tr><th>PDF : date</th><th>PDF : montant</th><th>PDF : libellé</th><th>Supabase : date</th><th>Supabase : montant</th><th>Supabase : libellé</th><th>Attention</th></tr></thead><tbody>${r.differences.map(x=>`<tr><td>${esc(x.pdfDate||"—")}</td><td>${x.pdfAmount===null?"—":euro(x.pdfAmount)}</td><td>${esc(x.pdfLabel||"—")}</td><td>${esc(x.dbDate||"—")}</td><td>${x.dbAmount===null?"—":euro(x.dbAmount)}</td><td>${esc(x.dbLabel||"—")}</td><td>${x.linked?"⚠️ Rapproché ":""}${x.uncertain?"Appariement à vérifier":"À vérifier"}</td></tr>`).join("")}</tbody></table></div></details>`).join("");
+  $("bankBatchResults").insertAdjacentHTML("beforeend",'<h3 style="margin-top:22px">🔬 Détail des différences</h3><p>Les lignes sont rapprochées à titre indicatif par date et libellé. Vérifie chaque correspondance avant toute correction.</p>'+ (detailed||'<p>Aucune différence détaillée.</p>'));
   const good=batchAuditResults.filter(r=>r.database==="Conforme").length;
   status.textContent=`${files.length} relevé(s) analysé(s), ${good} conforme(s). Diagnostic uniquement : aucune donnée modifiée.`;
   status.className="notice "+(good===files.length?"ok":"err");
@@ -1040,6 +1065,11 @@ async function runBatchAudit(){
   $("bankBatchShare").classList.remove("hidden");
  }catch(e){status.textContent="Contrôle interrompu : "+e.message;status.className="notice err";}
  finally{bankMeta=oldMeta;button.disabled=false;}
+}
+function batchAuditDetailCsvText(){
+ const rows=[["Mois","Fichier","Date PDF","Montant PDF","Libellé PDF","Date Supabase","Montant Supabase","Libellé Supabase","Rapproché","Appariement incertain"]];
+ batchAuditResults.forEach(r=>(r.differences||[]).forEach(x=>rows.push([r.month,r.file,x.pdfDate,x.pdfAmount??"",x.pdfLabel,x.dbDate,x.dbAmount??"",x.dbLabel,x.linked?"Oui":"Non",x.uncertain?"Oui":"Non"])));
+ return "\ufeff"+rows.map(row=>row.map(v=>'"'+String(v??"").replaceAll('"','""')+'"').join(";")).join("\r\n");
 }
 function batchAuditCsvText(){
  const rows=[["Fichier","Mois","PDF","Supabase","Mouvements PDF","Mouvements Supabase","Écarts","Diagnostic"],...batchAuditResults.map(r=>[r.file,r.month,r.pdf,r.database,r.pdfCount,r.dbCount,r.errors,r.detail])];
@@ -1051,14 +1081,14 @@ function batchAuditText(){
 function auditShareMessage(msg,error=false){let el=$("bankBatchShareStatus");el.textContent=msg;el.className="notice "+(error?"err":"ok");}
 async function shareBatchAudit(){
  if(!batchAuditResults.length)return auditShareMessage("Lance d’abord le contrôle des relevés.",true);
- const file=new File([batchAuditCsvText()],"diagnostic-bancaire-rcsq.csv",{type:"text/csv"});
+ const file=new File([batchAuditDetailCsvText()],"diagnostic-detaille-rcsq.csv",{type:"text/csv"});
  try{
    if(navigator.share&&navigator.canShare?.({files:[file]})){
      await navigator.share({files:[file],title:"Diagnostic bancaire RCSQ"});
      auditShareMessage("Diagnostic transmis à la fenêtre de partage de l’iPhone.");return;
    }
-   if(navigator.share){await navigator.share({title:"Diagnostic bancaire RCSQ",text:batchAuditText()});auditShareMessage("Diagnostic transmis à la fenêtre de partage.");return;}
-   if(navigator.clipboard?.writeText){await navigator.clipboard.writeText(batchAuditText());auditShareMessage("Diagnostic copié. Colle-le dans notre conversation.");return;}
+   if(navigator.share){await navigator.share({title:"Diagnostic bancaire RCSQ",text:batchAuditText()+"\n\nDÉTAIL DES ÉCARTS\n"+batchAuditResults.flatMap(r=>(r.differences||[]).map(x=>`${r.month} | PDF ${x.pdfDate} ${x.pdfAmount} ${x.pdfLabel} | Supabase ${x.dbDate} ${x.dbAmount} ${x.dbLabel} | ${x.linked?"RAPPROCHÉ":"Non rapproché"}`)).join("\n")});auditShareMessage("Diagnostic transmis à la fenêtre de partage.");return;}
+   if(navigator.clipboard?.writeText){await navigator.clipboard.writeText(batchAuditText()+"\n\n"+batchAuditDetailCsvText());auditShareMessage("Diagnostic copié. Colle-le dans notre conversation.");return;}
    auditShareMessage("Le partage n’est pas disponible sur ce navigateur. Le diagnostic reste visible ci-dessus.",true);
  }catch(e){if(e?.name!=="AbortError")auditShareMessage("Partage impossible : "+(e.message||String(e)),true);}
 }
