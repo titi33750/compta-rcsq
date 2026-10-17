@@ -144,6 +144,7 @@ table{width:100%;border-collapse:collapse;font-size:14px}th,td{text-align:left;p
  <button id="bankBatchRun" class="btn primary" type="button" style="margin-top:12px;width:100%">🔎 Contrôler tous les relevés</button>
  <div id="bankBatchStatus" class="notice">Aucune modification automatique des données.</div>
  <div id="bankBatchResults" class="tablewrap"></div>
+ <div id="bankRepairPanel" class="hidden" style="margin-top:18px;border:2px solid #c8d5e6;border-radius:12px;padding:14px"><h3>🛡️ Prévisualisation des corrections</h3><p id="bankRepairSummary"></p><div id="bankRepairTable" class="tablewrap"></div><div class="row" style="margin-top:10px"><button id="bankRepairBackup" class="btn light" type="button">📥 Télécharger la sauvegarde CSV</button><button id="bankRepairApply" class="btn primary" type="button" disabled>🔒 Appliquer les corrections sûres</button></div><p id="bankRepairStatus" class="notice" aria-live="polite">Aucune donnée modifiée.</p></div>
  <div class="row" style="margin-top:10px"><button id="bankBatchShare" class="btn primary hidden" type="button">📤 Partager le diagnostic</button><button id="bankBatchExport" class="btn light hidden" type="button">Exporter le diagnostic CSV</button></div><div id="bankBatchShareStatus" class="notice hidden" aria-live="polite"></div>
 </div>
 <div id="bankNotice" class="notice">V2 : contrôle des totaux PDF et rapprochement uniquement après enregistrement du relevé. Les montants doivent être vérifiés avec le PDF original.</div>
@@ -985,10 +986,11 @@ async function saveUserRole(id){
 }
 
 let batchAuditResults=[];
+let bankRepairCandidates=[];let bankRepairBackupDownloaded=false;
 async function runBatchAudit(){
  const files=[...$("bankBatchFiles").files];if(!files.length)return alert("Sélectionne au moins un relevé PDF.");
  if(!["admin","tresorier"].includes(profile?.role))return alert("Contrôle réservé à l'administrateur et au trésorier.");
- const button=$("bankBatchRun"),status=$("bankBatchStatus");button.disabled=true;batchAuditResults=[];
+ const button=$("bankBatchRun"),status=$("bankBatchStatus");button.disabled=true;batchAuditResults=[];bankRepairCandidates=[];bankRepairBackupDownloaded=false;$("bankRepairPanel").classList.add("hidden");
  // Le parseur historique utilise bankMeta : sauvegarde puis restauration systématique.
  const oldMeta={...bankMeta};
  const seenMonths=new Set();
@@ -1043,7 +1045,7 @@ async function runBatchAudit(){
          if(score>bestScore){bestScore=score;best=j;}
        });
        const db=best>=0?dbRemaining.splice(best,1)[0]:null;
-       result.differences.push({pdfDate:isoGuess(pdf.date),pdfAmount:pdf.amount,pdfLabel:pdf.label,dbDate:db?.transaction_date||"",dbAmount:db?.amount??null,dbLabel:db?.label||"",linked:!!db?.matched_entry_id,uncertain:bestScore<10||dbRemaining.some(x=>isoGuess(x.transaction_date)===isoGuess(pdf.date))});
+       result.differences.push({pdfDate:isoGuess(pdf.date),pdfAmount:pdf.amount,pdfLabel:pdf.label,dbDate:db?.transaction_date||"",dbAmount:db?.amount??null,dbLabel:db?.label||"",linked:!!db?.matched_entry_id,uncertain:bestScore<10||dbRemaining.some(x=>isoGuess(x.transaction_date)===isoGuess(pdf.date)),dbId:db?.id||null,statementId:saved.id,score:bestScore});
      }
      dbRemaining.forEach(db=>result.differences.push({pdfDate:"",pdfAmount:null,pdfLabel:"",dbDate:db.transaction_date,dbAmount:db.amount,dbLabel:db.label,linked:!!db.matched_entry_id,uncertain:true}));
      const linkedWrong=stored.filter(r=>r.matched_entry_id&& !rows.some(x=>isoGuess(x.date)===r.transaction_date&&cents(x.amount)===cents(r.amount))).length;
@@ -1063,9 +1065,60 @@ async function runBatchAudit(){
   status.className="notice "+(good===files.length?"ok":"err");
   $("bankBatchExport").classList.remove("hidden");
   $("bankBatchShare").classList.remove("hidden");
+  prepareBankRepairPreview();
  }catch(e){status.textContent="Contrôle interrompu : "+e.message;status.className="notice err";}
  finally{bankMeta=oldMeta;button.disabled=false;}
 }
+// Réparation strictement opt-in : aucun UPDATE lors de l'analyse ou de la prévisualisation.
+function prepareBankRepairPreview(){
+ const all=batchAuditResults.flatMap(r=>(r.differences||[]).map(x=>({...x,month:r.month,pdfStatus:r.pdf,dbStatus:r.database})));
+ // Correspondance exacte des dates et libellés hors numéro de référence, avec unicité des identifiants.
+ const normLabel=s=>norm(String(s||"").replace(/\b\d{9,}\b/g," ")).replace(/\s+/g," ").trim();
+ const counts=new Map();all.forEach(x=>{if(x.dbId)counts.set(x.dbId,(counts.get(x.dbId)||0)+1)});
+ bankRepairCandidates=all.filter(x=>x.dbId&&isUuid(x.dbId)&&isUuid(x.statementId)&&x.pdfStatus==="Conforme"&&x.pdfDate===x.dbDate&&x.pdfAmount!==null&&x.dbAmount!==null&&bankCents(x.pdfAmount)!==bankCents(x.dbAmount)&&!x.linked&&!x.uncertain&&x.score>=14&&normLabel(x.pdfLabel)===normLabel(x.dbLabel)&&counts.get(x.dbId)===1);
+ const blocked=all.length-bankRepairCandidates.length;
+ const panel=$("bankRepairPanel");panel.classList.remove("hidden");
+ $("bankRepairSummary").textContent=`${bankRepairCandidates.length} correction(s) candidates à confirmer ; ${blocked} ligne(s) bloquée(s) pour vérification manuelle (rapprochée, incertaine ou non identifiable). La sauvegarde est obligatoire avant toute modification.`;
+ $("bankRepairTable").innerHTML='<table><thead><tr><th>Mois</th><th>Date</th><th>Ancien montant</th><th>Montant PDF</th><th>Libellé</th></tr></thead><tbody>'+bankRepairCandidates.map(x=>`<tr><td>${esc(x.month)}</td><td>${esc(x.pdfDate)}</td><td>${euro(x.dbAmount)}</td><td>${euro(x.pdfAmount)}</td><td>${esc(x.pdfLabel.slice(0,160))}</td></tr>`).join('')+'</tbody></table>';
+ $("bankRepairApply").disabled=true;
+ $("bankRepairStatus").textContent="Prévisualisation uniquement : aucune donnée modifiée.";
+}
+function downloadBankRepairBackup(){
+ if(!bankRepairCandidates.length)return alert("Aucune correction sûre à sauvegarder.");
+ const cols=["id_transaction","id_releve","mois","date","montant_original","montant_pdf","libelle_original","libelle_pdf"];
+ const data=[cols,...bankRepairCandidates.map(x=>[x.dbId,x.statementId,x.month,x.dbDate,x.dbAmount,x.pdfAmount,x.dbLabel,x.pdfLabel])];
+ const csv=data.map(row=>row.map(v=>'"'+String(v??"").replace(/"/g,'""')+'"').join(';')).join('\r\n');
+ const blob=new Blob(["\ufeff"+csv],{type:"text/csv;charset=utf-8"}),url=URL.createObjectURL(blob),a=document.createElement("a");
+ a.href=url;a.download="sauvegarde-avant-correction-rcsq.csv";document.body.append(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(url),30000);
+ bankRepairBackupDownloaded=true;$("bankRepairApply").disabled=false;
+ $("bankRepairStatus").textContent="Sauvegarde CSV demandée. Vérifie sa présence dans Fichiers avant de confirmer.";
+}
+async function applyBankRepair(){
+ if(!bankRepairBackupDownloaded||!bankRepairCandidates.length)return;
+ if(!["admin","tresorier"].includes(profile?.role))return alert("Accès non autorisé.");
+ if(!confirm(`As-tu vérifié que la sauvegarde CSV est bien enregistrée ?\n\n${bankRepairCandidates.length} montant(s) seront corrigés dans Supabase. Les opérations rapprochées ou incertaines sont exclues.`))return;
+ if(!confirm("Dernière confirmation : modifier les montants bancaires sélectionnés ? Cette action écrit dans Supabase."))return;
+ const btn=$("bankRepairApply"),status=$("bankRepairStatus");btn.disabled=true;$("bankBatchRun").disabled=true;
+ let done=0;
+ try{
+  for(const x of bankRepairCandidates){
+   status.textContent=`Vérification et correction ${done+1}/${bankRepairCandidates.length}…`;
+   const read=await sb.from("bank_transactions").select("id,statement_id,transaction_date,amount,label,matched_entry_id").eq("id",x.dbId).single();
+   if(read.error)throw read.error;
+   const current=read.data;
+   if(!current||current.statement_id!==x.statementId||current.transaction_date!==x.dbDate||bankCents(current.amount)!==bankCents(x.dbAmount)||current.matched_entry_id||current.label!==x.dbLabel)throw new Error("Une opération a changé depuis le diagnostic. Arrêt de sécurité.");
+   const upd=await sb.from("bank_transactions").update({amount:x.pdfAmount}).eq("id",x.dbId).eq("statement_id",x.statementId).eq("amount",x.dbAmount).is("matched_entry_id",null).select("id,amount");
+   if(upd.error)throw upd.error;
+   if(upd.data?.length!==1||bankCents(upd.data[0].amount)!==bankCents(x.pdfAmount))throw new Error("Correction non confirmée par la base. Arrêt de sécurité.");
+   done++;
+  }
+  status.textContent=`✅ ${done} montant(s) corrigé(s). Relance le diagnostic PDF pour vérifier les résultats.`;status.className="notice ok";
+ }catch(e){status.textContent=`⚠️ Arrêt après ${done} correction(s) confirmée(s) : ${e.message}. Conserve la sauvegarde et relance un diagnostic avant toute autre action.`;status.className="notice err";}
+ finally{$("bankBatchRun").disabled=false;bankRepairBackupDownloaded=false;}
+}
+$("bankRepairBackup").addEventListener("click",downloadBankRepairBackup);
+$("bankRepairApply").addEventListener("click",applyBankRepair);
+
 function batchAuditDetailCsvText(){
  const rows=[["Mois","Fichier","Date PDF","Montant PDF","Libellé PDF","Date Supabase","Montant Supabase","Libellé Supabase","Rapproché","Appariement incertain"]];
  batchAuditResults.forEach(r=>(r.differences||[]).forEach(x=>rows.push([r.month,r.file,x.pdfDate,x.pdfAmount??"",x.pdfLabel,x.dbDate,x.dbAmount??"",x.dbLabel,x.linked?"Oui":"Non",x.uncertain?"Oui":"Non"])));
