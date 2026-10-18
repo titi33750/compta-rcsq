@@ -1083,16 +1083,34 @@ function prepareBankRepairPreview(){
  $("bankRepairApply").disabled=true;
  $("bankRepairStatus").textContent="Prévisualisation uniquement : aucune donnée modifiée.";
 }
-function downloadBankRepairBackup(){
- if(!bankRepairCandidates.length)return alert("Aucune correction sûre à sauvegarder.");
+async function downloadBankRepairBackup(){
+ const status=$("bankRepairStatus");
+ if(!bankRepairCandidates.length){status.textContent="Aucune correction candidate à sauvegarder.";return;}
  const cols=["id_transaction","id_releve","mois","date","montant_original","montant_pdf","libelle_original","libelle_pdf"];
  const data=[cols,...bankRepairCandidates.map(x=>[x.dbId,x.statementId,x.month,x.dbDate,x.dbAmount,x.pdfAmount,x.dbLabel,x.pdfLabel])];
  const csv=data.map(row=>row.map(v=>'"'+String(v??"").replace(/"/g,'""')+'"').join(';')).join('\r\n');
- const blob=new Blob(["\ufeff"+csv],{type:"text/csv;charset=utf-8"}),url=URL.createObjectURL(blob),a=document.createElement("a");
- a.href=url;a.download="sauvegarde-avant-correction-rcsq.csv";document.body.append(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(url),30000);
- bankRepairBackupDownloaded=true;$("bankRepairApply").disabled=false;
- $("bankRepairStatus").textContent="Sauvegarde CSV demandée. Vérifie sa présence dans Fichiers avant de confirmer.";
+ const fileName="sauvegarde-avant-correction-rcsq.csv";
+ const blob=new Blob(["\ufeff"+csv],{type:"text/csv;charset=utf-8"});
+ bankRepairBackupDownloaded=false;$("bankRepairApply").disabled=true;
+ status.textContent="Préparation de la sauvegarde…";
+ try{
+  const file=new File([blob],fileName,{type:"text/csv"});
+  if(navigator.share&&navigator.canShare?.({files:[file]})){
+   await navigator.share({files:[file],title:"Sauvegarde bancaire RCSQ"});
+   status.textContent="Menu de partage ouvert. Vérifie que le CSV est bien enregistré dans Fichiers avant toute correction.";
+  }else{
+   const url=URL.createObjectURL(blob),a=document.createElement("a");
+   a.href=url;a.download=fileName;document.body.append(a);a.click();a.remove();
+   setTimeout(()=>URL.revokeObjectURL(url),60000);
+   status.textContent="Téléchargement demandé. Vérifie dans Téléchargements ou Fichiers que le CSV existe.";
+  }
+  bankRepairBackupDownloaded=true;$("bankRepairApply").disabled=false;
+ }catch(e){
+  status.textContent=e?.name==="AbortError"?"Partage annulé : aucune sauvegarde confirmée.":"Impossible de partager la sauvegarde : "+(e?.message||String(e));
+  bankRepairBackupDownloaded=false;$("bankRepairApply").disabled=true;
+ }
 }
+
 async function applyBankRepair(){
  if(!bankRepairBackupDownloaded||!bankRepairCandidates.length)return;
  if(!["admin","tresorier"].includes(profile?.role))return alert("Accès non autorisé.");
