@@ -519,14 +519,16 @@ async function saveBudgetEdit(){if(!assertCurrentYear())return;
  let c=cats.find(x=>x.id===id);if(c)c.planned_amount=amount;
  $("budgetEditStatus").textContent="Budget prévisionnel enregistré ✅";$("budgetEditStatus").className="notice ok";renderBudget();
 }
+// Identifiant unique sur tous les exercices, y compris les validations simultanées.
+function newUniquePiece(type){
+ const prefix=type==="depense"?"DEP":"REC";
+ return prefix+"-"+fy.label+"-"+globalThis.crypto.randomUUID().replaceAll("-","").slice(0,12).toUpperCase();
+}
 function openEntry(type){if(!assertCurrentYear())return;entryType=type;fillCategories();$("entryTitle").textContent=type==="recette"?"Nouvelle recette":"Nouvelle dépense";$("entryDate").value=new Date().toISOString().slice(0,10);$("entryCard").classList.remove("hidden");$("entryCard").scrollIntoView({behavior:"smooth"})}
 async function saveEntry(status){if(!assertCurrentYear())return;
  if(!["admin","tresorier","saisie"].includes(profile.role))return entryMsg("Ton rôle est en lecture seule.","err");
  const amount=Number($("entryAmount").value),label=$("entryLabel").value.trim(),entryDate=$("entryDate").value;if(!fy||!Number.isFinite(amount)||amount<=0||!label||!entryDate)return entryMsg("Date, montant et libellé sont obligatoires.","err");let dateFy=fiscalYearForDate(entryDate);if(!dateFy)return entryMsg("Cette date ne correspond à aucun exercice comptable configuré.","err");if(dateFy.id!==fy.id)return entryMsg(`Cette date appartient à l’exercice ${dateFy.label}. Sélectionne cet exercice avant d’enregistrer.`,"err");
- let prefix=entryType==="depense"?"DEP":"REC";
- let nums=entries.filter(e=>e.piece_number&&e.piece_number.startsWith(prefix+"-")).map(e=>parseInt(e.piece_number.split("-").pop(),10)).filter(Number.isFinite);
- let seq=(nums.length?Math.max(...nums.filter(n=>n<100000),0):0)+1;
- let piece=prefix+"-"+String(seq).padStart(4,"0");
+ let piece=newUniquePiece(entryType);
  let payload={fiscal_year_id:fy.id,piece_number:piece,entry_date:$("entryDate").value,type:entryType,label,third_party:$("entryThird").value.trim()||null,category_id:$("entryCategory").value||null,account_id:$("entryAccount").value||null,payment_method:$("entryPayment").value||null,amount,notes:$("entryNotes").value.trim()||null,status,created_by:user.id};
  entryMsg("Enregistrement…");
  const {data,error}=await sb.from("entries").insert(payload).select().single();if(error)return entryMsg("Erreur : "+error.message,"err");
@@ -818,10 +820,7 @@ async function validateBankAssist(){if(!assertCurrentYear())return;
       });
       if(duplicate)continue;
        if(p.date<fy.start_date||p.date>fy.end_date)throw new Error("Écriture hors de l’exercice sélectionné.");
-      let prefix=p.type==="depense"?"DEP":"REC";
-      let nums=entries.filter(e=>e.piece_number?.startsWith(prefix+"-")).map(e=>parseInt(e.piece_number.split("-").pop(),10)).filter(Number.isFinite);
-      let seq=(nums.length?Math.max(...nums.filter(n=>n<100000),0):0)+1;
-      let piece=prefix+"-"+String(seq).padStart(4,"0");
+      let piece=newUniquePiece(p.type);
       let payload={
         fiscal_year_id:fy.id,piece_number:piece,entry_date:p.date,type:p.type,label:p.label.trim(),
         third_party:p.third.trim()||null,category_id:p.category_id,account_id:bankAccount?.id||null,
