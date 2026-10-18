@@ -96,6 +96,19 @@ table{width:100%;border-collapse:collapse;font-size:14px}th,td{text-align:left;p
  <h3 style="margin-top:24px">🔴 Dépenses</h3><div id="budgetExpenses"></div>
  <h3 style="margin-top:30px">🟢 Recettes</h3><div id="budgetIncome"></div>
 </div>
+<div class="card" id="budgetManagePanel">
+ <div class="sectionTitle"><h2>⚙️ Gérer les postes budgétaires</h2></div>
+ <p>Ajouter, renommer ou désactiver un poste pour l’exercice sélectionné. Les postes déjà utilisés sont protégés.</p>
+ <button id="budgetManageOpen" class="btn primary" type="button">➕ Ajouter un poste / sous-poste</button>
+ <div id="budgetManageForm" class="hidden" style="margin-top:14px">
+  <label>Nature</label><select id="budgetManageType"><option value="depense">Dépense</option><option value="recette">Recette</option></select>
+  <label>Poste parent (facultatif)</label><select id="budgetManageParent"></select>
+  <label>Nom du poste</label><input id="budgetManageName" maxlength="120" placeholder="Ex. Déplacements">
+  <label>Budget prévisionnel (€)</label><input id="budgetManageAmount" type="number" min="0" step="0.01" value="0" inputmode="decimal">
+  <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:12px"><button id="budgetManageSave" class="btn primary" type="button">Enregistrer</button><button id="budgetManageCancel" class="btn light" type="button">Annuler</button><button id="budgetManageDelete" class="btn light hidden" type="button">Désactiver ce poste</button></div>
+  <div id="budgetManageStatus" class="notice hidden" role="status"></div>
+ </div>
+</div>
 <div id="budgetEdit" class="card hidden">
  <div class="sectionTitle"><h2 id="budgetEditTitle">Modifier le budget</h2><button id="budgetEditClose" class="btn light">Fermer</button></div>
  <p id="budgetEditPath" style="color:#68758f"></p>
@@ -300,7 +313,7 @@ async function loadFiscalYearData(){
 }
 async function changeFiscalYear(){
  let next=fiscalYears.find(x=>x.id===$("exerciseSelect").value);if(!next||next.id===fy?.id)return;
- fy=next;pendingBankIndex=null;["entryCard","receiptCard","editEntryCard","budgetEdit"].forEach(id=>$(id).classList.add("hidden"));await loadFiscalYearData();
+ fy=next;pendingBankIndex=null;["entryCard","receiptCard","editEntryCard","budgetEdit","budgetManageForm"].forEach(id=>$(id).classList.add("hidden"));await loadFiscalYearData();
 }
 async function loadEntries(){if(!fy)return;const {data,error}=await sb.from("entries").select("*").eq("fiscal_year_id",fy.id).order("entry_date",{ascending:false}).order("created_at",{ascending:false});if(error)console.error(error);entries=data||[];if(entries.length){const ar=await sb.from("attachments").select("*").in("entry_id",entries.map(e=>e.id)).order("created_at",{ascending:false});attachments=ar.data||[]}else attachments=[]}
 function catName(id){let c=cats.find(x=>x.id===id);if(!c)return "—";let p=c.parent_id&&cats.find(x=>x.id===c.parent_id);return p?p.name+" › "+c.name:c.name}
@@ -360,6 +373,8 @@ function renderBudget(){
  $("budgetExpenses").innerHTML=roots.filter(r=>r.type==="depense").map(group).join("")||"Aucune catégorie.";
  $("budgetIncome").innerHTML=roots.filter(r=>r.type==="recette").map(group).join("")||"Aucune catégorie.";
  document.querySelectorAll(".budgetEditBtn").forEach(b=>b.addEventListener("click",()=>openBudgetEdit(b.dataset.id)));
+ document.querySelectorAll(".budgetEditBtn").forEach(b=>{b.insertAdjacentHTML("afterend",`<button class="btn light budgetManageEdit" data-id="${b.dataset.id}" type="button" style="padding:6px 9px">⚙️ Gérer</button>`)});
+ document.querySelectorAll(".budgetManageEdit").forEach(b=>b.addEventListener("click",()=>openBudgetManage(b.dataset.id)));
 }
 
 
@@ -404,6 +419,64 @@ function expenseReportCsv(){
  let txt=rows.map(r=>r.map(v=>'"'+String(v??"").replaceAll('"','""')+'"').join(";")).join("\n"),blob=new Blob(["\ufeff"+txt],{type:"text/csv;charset=utf-8"}),a=document.createElement("a");
  a.href=globalThis.URL.createObjectURL(blob);a.download=`etat-depenses-${fy.label}-au-${cutoff}.csv`;a.click();setTimeout(()=>globalThis.URL.revokeObjectURL(a.href),1000);
 }
+
+function budgetManageAllowed(){return !!fy&&fy.label==="2026-2027"&&["admin","tresorier"].includes(profile?.role)}
+function budgetManageParents(type,selected=""){
+ let choices=cats.filter(c=>!c.parent_id&&c.type===type);
+ $("budgetManageParent").innerHTML='<option value="">Aucun : poste principal</option>'+choices.map(c=>`<option value="${c.id}">${esc(c.name)}</option>`).join("");
+ $("budgetManageParent").value=selected||"";
+}
+function openBudgetManage(id=""){
+ if(!budgetManageAllowed()){alert("Gestion réservée à l’administrateur ou au trésorier de 2026-2027.");return}
+ let c=cats.find(x=>x.id===id);
+ $("budgetManageForm").dataset.id=c?.id||"";
+ $("budgetManageType").value=c?.type||"depense";
+ $("budgetManageType").disabled=!!c;
+ budgetManageParents(c?.type||"depense",c?.parent_id||"");
+ $("budgetManageName").value=c?.name||"";
+ $("budgetManageAmount").value=Number(c?.planned_amount||0);
+ $("budgetManageDelete").classList.toggle("hidden",!c);
+ $("budgetManageStatus").classList.add("hidden");
+ $("budgetManageForm").classList.remove("hidden");
+ $("budgetManagePanel").scrollIntoView({behavior:"smooth"});
+}
+function budgetManageMessage(msg,error=false){let e=$("budgetManageStatus");e.textContent=msg;e.className="notice "+(error?"err":"ok")}
+async function saveBudgetManage(){
+ if(!budgetManageAllowed())return budgetManageMessage("Accès non autorisé.",true);
+ let id=$("budgetManageForm").dataset.id,name=$("budgetManageName").value.trim(),type=$("budgetManageType").value,parent_id=$("budgetManageParent").value||null,amount=Number($("budgetManageAmount").value);
+ if(!name||!Number.isFinite(amount)||amount<0)return budgetManageMessage("Renseigne un nom et un montant valide.",true);
+ let existing=cats.find(c=>c.id===id);
+ if(parent_id===id)return budgetManageMessage("Un poste ne peut pas être son propre parent.",true);
+ if(existing&&!existing.parent_id&&parent_id&&cats.some(c=>c.parent_id===id))return budgetManageMessage("Déplace d’abord les sous-postes avant de changer le parent.",true);
+ if(cats.some(c=>c.id!==id&&c.name.toLowerCase()===name.toLowerCase()&&c.type===type&&(c.parent_id||null)===parent_id))return budgetManageMessage("Ce poste existe déjà.",true);
+ let payload={name,planned_amount:amount,parent_id};
+ if(!existing)Object.assign(payload,{fiscal_year_id:fy.id,type,active:true});
+ $("budgetManageSave").disabled=true;
+ let q=existing?sb.from("budget_categories").update(payload).eq("id",id).eq("fiscal_year_id",fy.id):sb.from("budget_categories").insert(payload);
+ let {error}=await q;$("budgetManageSave").disabled=false;
+ if(error)return budgetManageMessage("Enregistrement impossible : "+error.message,true);
+ await loadFiscalYearData();$("budgetManageForm").classList.add("hidden");
+}
+async function disableBudgetManage(){
+ if(!budgetManageAllowed())return;
+ let id=$("budgetManageForm").dataset.id,c=cats.find(x=>x.id===id);if(!c)return;
+ if(cats.some(x=>x.parent_id===id))return budgetManageMessage("Ce poste possède des sous-postes. Désactive-les d’abord.",true);
+ // Never hide a category referenced by an accounting entry, including drafts.
+ let {count,error:checkError}=await sb.from("entries").select("id",{count:"exact",head:true}).eq("category_id",id);
+ if(checkError)return budgetManageMessage("Impossible de vérifier les écritures : "+checkError.message,true);
+ if(count>0)return budgetManageMessage("Ce poste est utilisé par une écriture : suppression bloquée pour protéger l’historique.",true);
+ if(!confirm(`Désactiver « ${c.name} » ? Il disparaîtra des choix, mais restera dans la base.`))return;
+ $("budgetManageDelete").disabled=true;
+ let {error}=await sb.from("budget_categories").update({active:false}).eq("id",id).eq("fiscal_year_id",fy.id);
+ $("budgetManageDelete").disabled=false;
+ if(error)return budgetManageMessage("Désactivation impossible : "+error.message,true);
+ await loadFiscalYearData();$("budgetManageForm").classList.add("hidden");
+}
+$("budgetManageOpen").addEventListener("click",()=>openBudgetManage());
+$("budgetManageCancel").addEventListener("click",()=>$("budgetManageForm").classList.add("hidden"));
+$("budgetManageType").addEventListener("change",()=>budgetManageParents($("budgetManageType").value));
+$("budgetManageSave").addEventListener("click",saveBudgetManage);
+$("budgetManageDelete").addEventListener("click",disableBudgetManage);
 
 function openBudgetEdit(id){if(!assertCurrentYear())return;
  let c=cats.find(x=>x.id===id);if(!c)return;
