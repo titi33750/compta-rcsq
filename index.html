@@ -1293,11 +1293,6 @@ $("togglePassword").addEventListener("click",togglePassword);$("forgotPassword")
 document.querySelectorAll("nav button").forEach(b=>b.addEventListener("click",()=>showTab(b.dataset.tab)));document.querySelectorAll(".newEntry").forEach(b=>b.addEventListener("click",()=>openEntry(b.dataset.type)));
 document.querySelector(".gotoLedger").addEventListener("click",()=>showTab("ledger"));document.querySelector(".gotoBudget").addEventListener("click",()=>showTab("budget"));$("closeEntry").addEventListener("click",()=> $("entryCard").classList.add("hidden"));
 $("exerciseSelect").addEventListener("change",changeFiscalYear);$("expenseReportRefresh").addEventListener("click",renderExpenseReport);$("expenseReportDate").addEventListener("change",renderExpenseReport);$("expenseReportCsv").addEventListener("click",expenseReportCsv);$("expenseReportPrint").addEventListener("click",()=>printRcsqReport("expenses"));$("draftBtn").addEventListener("click",()=>saveEntry("brouillon"));$("validateBtn").addEventListener("click",()=>saveEntry("validee"));$("refreshBtn").addEventListener("click",async()=>{await loadEntries();renderAll()});$("csvBtn").addEventListener("click",csv);$("budgetEditClose").addEventListener("click",()=>$("budgetEdit").classList.add("hidden"));$("budgetEditSave").addEventListener("click",saveBudgetEdit);$("receiptClose").addEventListener("click",()=>$("receiptCard").classList.add("hidden"));$("receiptSave").addEventListener("click",saveReceipt);$("editEntryClose").addEventListener("click",()=>$("editEntryCard").classList.add("hidden"));$("editEntrySave").addEventListener("click",saveEntryEdit);$("usersRefreshBtn").addEventListener("click",loadUsers);$("bankImportBtn").addEventListener("click",importBank);$("bankRepairOctober").addEventListener("click",repairOctoberFromCsv);$("bankSaveBtn").addEventListener("click",saveSharedBank);$("bankLoadBtn").addEventListener("click",loadSharedBank);$("bankAssistSelect").addEventListener("click",()=>{bankAssist.forEach(p=>p.selected=true);renderBankAssist()});$("bankAssistValidate").addEventListener("click",validateBankAssist);$("bankClearBtn").addEventListener("click",()=>{bankRows=[];bankMeta={opening:null,closing:null,debits:0,credits:0};bankStatementId=null;$("bankFile").value="";$("bankNotice").textContent="Import vidé.";$("bankNotice").className="notice";renderBank()});
-sb.auth.onAuthStateChange((event,session)=>{if(event==="SIGNED_IN"&&session&&!user){user=session.user;setTimeout(boot,0)}});
-boot();
-})();
-</script>
-<script>
 
 /* Documents d'impression independants de l'interface mobile. Aucun changement en base. */
 function printRcsqReport(kind){
@@ -1323,5 +1318,10 @@ function printRcsqReport(kind){
  window.print();
 }
 
+
+sb.auth.onAuthStateChange((event,session)=>{if(event==="SIGNED_IN"&&session&&!user){user=session.user;setTimeout(boot,0)}});
+boot();
+})();
 </script>
+
 </body></html>
