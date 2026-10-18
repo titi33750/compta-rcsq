@@ -64,6 +64,7 @@ table{width:100%;border-collapse:collapse;font-size:14px}th,td{text-align:left;p
 </section>
 
 <section id="appView" class="hidden">
+<div id="exerciseNotice" class="notice" style="margin-bottom:14px" aria-live="polite"></div>
 <div class="topbar"><div><strong id="welcome">Bienvenue</strong><div class="badge" id="roleBadge">rôle</div></div><button id="logoutBtn" class="btn light">Déconnexion</button></div>
 <nav><button class="active" data-tab="dashboard">Tableau de bord</button><button data-tab="ledger">Livre de comptes</button><button data-tab="budget">Budget</button><button data-tab="expensesReport">📑 État des dépenses</button><button data-tab="bank">Rapprochement bancaire</button><button id="usersTabBtn" class="hidden" data-tab="users">👥 Utilisateurs</button></nav>
 
@@ -270,23 +271,36 @@ async function boot(){
   sb.from("accounts").select("*").eq("active",true).order("name")
  ]);
  profile=p.data||{display_name:user.email.split("@")[0],role:"lecture"};fiscalYears=ys.data||[];accounts=a.data||[];knownProfiles=profile?.id?[profile]:[{id:user.id,display_name:profile.display_name||user.email.split("@")[0],role:profile.role}];
- fy=fiscalYears.find(x=>x.is_active)||fiscalYears[0]||null;
+ fy=fiscalYears.find(x=>x.label?.includes("2026-2027"))||fiscalYears.find(x=>x.start_date<="2026-10-18"&&x.end_date>="2026-10-18")||fiscalYears.find(x=>x.is_active)||fiscalYears[0]||null;
  $("welcome").textContent="Bienvenue "+(profile.display_name||user.email);$("roleBadge").textContent="Rôle : "+profile.role;$("headerUser").textContent=user.email;
  $("exerciseSelect").innerHTML=fiscalYears.map(x=>`<option value="${x.id}">${esc(x.label)}</option>`).join("");if(fy)$("exerciseSelect").value=fy.id;
  fillAccounts();await loadFiscalYearData();if(profile.role==="admin"){$("usersTabBtn").classList.remove("hidden");await loadUsers();}else{$("usersTabBtn").classList.add("hidden");}
 }
 function frDate(d){return d?new Date(d+"T12:00:00").toLocaleDateString("fr-FR"):""}
 function fiscalYearForDate(d){return fiscalYears.find(x=>d>=x.start_date&&d<=x.end_date)||null}
+ function isArchivedYear(){return !!fy&&fy.end_date<"2026-09-01"}
+ function assertCurrentYear(){if(!fy){alert("Aucun exercice configuré dans Supabase. Demande la création de l’exercice 2026-2027 avant de saisir.");return false;}if(isArchivedYear()){alert("🔒 Exercice 2025-2026 archivé : consultation uniquement. Sélectionne 2026-2027 pour enregistrer.");return false;}return true;}
+ function updateExerciseUi(){
+   const old=isArchivedYear(),missing=!fiscalYears.some(x=>x.label?.includes("2026-2027")||(x.start_date<="2026-09-01"&&x.end_date>="2027-08-31"));
+   const el=$("exerciseNotice");
+   el.textContent=missing?"⚠️ L’exercice 2026-2027 n’existe pas encore dans Supabase. Il doit être configuré avant toute saisie pour cette saison.":old?"🔒 Archive 2025-2026 : consultation et exports uniquement. Aucune modification autorisée dans cet exercice.":"🏉 Exercice "+(fy?.label||"non configuré")+" : saisie et suivi de la saison en cours.";
+   el.className="notice "+(missing?"err":old?"":"ok");
+   document.querySelectorAll(".newEntry,.budgetEditBtn,.entryEditBtn,.receiptAdd,.bankCreate,.userRoleSave").forEach(b=>{if(!b.classList.contains("userRoleSave"))b.disabled=old||missing});
+   ["draftBtn","validateBtn","budgetEditSave","editEntrySave","receiptSave","bankImportBtn","bankSaveBtn","bankAssistValidate","bankRepairApply"].forEach(id=>{const b=$(id);if(b)b.disabled=old||missing});
+   $("bankBatchAudit").classList.toggle("hidden",!old);
+   $("budget").querySelector("h2").textContent="Budget "+(fy?.label||"de l’exercice");
+ }
+
 async function loadFiscalYearData(){
  if(!fy)return;
  $("exerciseHead").textContent=`Du ${frDate(fy.start_date)} au ${frDate(fy.end_date)}`;$("period").textContent=`Du ${frDate(fy.start_date)} au ${frDate(fy.end_date)}`;
  const c=await sb.from("budget_categories").select("*").eq("fiscal_year_id",fy.id).eq("active",true).order("name");cats=c.data||[];
  bankRows=[];bankMeta={opening:null,closing:null,debits:0,credits:0};bankStatementId=null;bankStatements=[];
- await loadEntries();renderAll();renderBank();if(["admin","tresorier"].includes(profile.role))await loadBankStatements();
+ await loadEntries();renderAll();renderBank();if(["admin","tresorier"].includes(profile.role))await loadBankStatements();updateExerciseUi();
 }
 async function changeFiscalYear(){
  let next=fiscalYears.find(x=>x.id===$("exerciseSelect").value);if(!next||next.id===fy?.id)return;
- fy=next;pendingBankIndex=null;await loadFiscalYearData();
+ fy=next;pendingBankIndex=null;["entryCard","receiptCard","editEntryCard","budgetEdit"].forEach(id=>$(id).classList.add("hidden"));await loadFiscalYearData();
 }
 async function loadEntries(){if(!fy)return;const {data,error}=await sb.from("entries").select("*").eq("fiscal_year_id",fy.id).order("entry_date",{ascending:false}).order("created_at",{ascending:false});if(error)console.error(error);entries=data||[];if(entries.length){const ar=await sb.from("attachments").select("*").in("entry_id",entries.map(e=>e.id)).order("created_at",{ascending:false});attachments=ar.data||[]}else attachments=[]}
 function catName(id){let c=cats.find(x=>x.id===id);if(!c)return "—";let p=c.parent_id&&cats.find(x=>x.id===c.parent_id);return p?p.name+" › "+c.name:c.name}
@@ -388,10 +402,10 @@ function expenseReportCsv(){
  let rows=[["Poste","Sous-poste","Pièce","Date","Fournisseur / tiers","Libellé","TTC","Budget du sous-poste"]];
  valid.sort((a,b)=>a.entry_date.localeCompare(b.entry_date)).forEach(e=>{let c=cats.find(x=>x.id===e.category_id),root=expenseRootForCategory(e.category_id);rows.push([root?.name||"Sans catégorie",c&&c.id!==root?.id?c.name:"",e.piece_number,e.entry_date,e.third_party||"",e.label,e.amount,c?.planned_amount||0])});
  let txt=rows.map(r=>r.map(v=>'"'+String(v??"").replaceAll('"','""')+'"').join(";")).join("\n"),blob=new Blob(["\ufeff"+txt],{type:"text/csv;charset=utf-8"}),a=document.createElement("a");
- a.href=URL.createObjectURL(blob);a.download=`etat-depenses-${fy.label}-au-${cutoff}.csv`;a.click();setTimeout(()=>URL.revokeObjectURL(a.href),1000);
+ a.href=globalThis.URL.createObjectURL(blob);a.download=`etat-depenses-${fy.label}-au-${cutoff}.csv`;a.click();setTimeout(()=>globalThis.URL.revokeObjectURL(a.href),1000);
 }
 
-function openBudgetEdit(id){
+function openBudgetEdit(id){if(!assertCurrentYear())return;
  let c=cats.find(x=>x.id===id);if(!c)return;
  if(!["admin","tresorier"].includes(profile.role)){alert("Modification réservée à l’administrateur et au trésorier.");return}
  $("budgetEdit").dataset.id=id;$("budgetEditTitle").textContent="Modifier le prévisionnel";
@@ -400,7 +414,7 @@ function openBudgetEdit(id){
  $("budgetEditAmount").value=Number(c.planned_amount||0);$("budgetEditStatus").classList.add("hidden");
  $("budgetEdit").classList.remove("hidden");$("budgetEdit").scrollIntoView({behavior:"smooth"});
 }
-async function saveBudgetEdit(){
+async function saveBudgetEdit(){if(!assertCurrentYear())return;
  let id=$("budgetEdit").dataset.id,amount=Number($("budgetEditAmount").value);
  if(!id||amount<0||!Number.isFinite(amount))return;
  $("budgetEditSave").disabled=true;
@@ -410,8 +424,8 @@ async function saveBudgetEdit(){
  let c=cats.find(x=>x.id===id);if(c)c.planned_amount=amount;
  $("budgetEditStatus").textContent="Budget prévisionnel enregistré ✅";$("budgetEditStatus").className="notice ok";renderBudget();
 }
-function openEntry(type){entryType=type;fillCategories();$("entryTitle").textContent=type==="recette"?"Nouvelle recette":"Nouvelle dépense";$("entryDate").value=new Date().toISOString().slice(0,10);$("entryCard").classList.remove("hidden");$("entryCard").scrollIntoView({behavior:"smooth"})}
-async function saveEntry(status){
+function openEntry(type){if(!assertCurrentYear())return;entryType=type;fillCategories();$("entryTitle").textContent=type==="recette"?"Nouvelle recette":"Nouvelle dépense";$("entryDate").value=new Date().toISOString().slice(0,10);$("entryCard").classList.remove("hidden");$("entryCard").scrollIntoView({behavior:"smooth"})}
+async function saveEntry(status){if(!assertCurrentYear())return;
  if(!["admin","tresorier","saisie"].includes(profile.role))return entryMsg("Ton rôle est en lecture seule.","err");
  const amount=Number($("entryAmount").value),label=$("entryLabel").value.trim(),entryDate=$("entryDate").value;if(!fy||!Number.isFinite(amount)||amount<=0||!label||!entryDate)return entryMsg("Date, montant et libellé sont obligatoires.","err");let dateFy=fiscalYearForDate(entryDate);if(!dateFy)return entryMsg("Cette date ne correspond à aucun exercice comptable configuré.","err");if(dateFy.id!==fy.id)return entryMsg(`Cette date appartient à l’exercice ${dateFy.label}. Sélectionne cet exercice avant d’enregistrer.`,"err");
  let prefix=entryType==="depense"?"DEP":"REC";
@@ -440,7 +454,7 @@ function entryMsg(m,k){$("entryStatus").textContent=m;$("entryStatus").className
 function showTab(id){document.querySelectorAll(".tab").forEach(x=>x.classList.add("hidden"));$(id).classList.remove("hidden");document.querySelectorAll("nav button").forEach(x=>x.classList.toggle("active",x.dataset.tab===id))}
 
 
-async function openEntryEdit(entryId){
+async function openEntryEdit(entryId){if(!assertCurrentYear())return;
  if(!["admin","tresorier","saisie"].includes(profile.role)){alert("Ton rôle est en lecture seule.");return}
  let e=entries.find(x=>x.id===entryId);if(!e)return;
  $("editEntryCard").dataset.entry=entryId;$("editEntryPiece").textContent=e.piece_number+" · "+(e.type==="depense"?"Dépense":"Recette");
@@ -450,7 +464,7 @@ async function openEntryEdit(entryId){
  $("editAccount").innerHTML=accounts.map(a=>`<option value="${a.id}" ${a.id===e.account_id?"selected":""}>${esc(a.name)}</option>`).join("");
  $("editEntryStatus").classList.add("hidden");$("editEntryCard").classList.remove("hidden");await loadEntryHistory(entryId);$("editEntryCard").scrollIntoView({behavior:"smooth"});
 }
-async function saveEntryEdit(){
+async function saveEntryEdit(){if(!assertCurrentYear())return;
  let id=$("editEntryCard").dataset.entry,e=entries.find(x=>x.id===id);if(!e)return;
  let amount=Number($("editAmount").value);if(!amount||amount<=0||!$("editDate").value||!$("editLabel").value.trim()){alert("Date, libellé et montant sont obligatoires.");return}
  $("editEntrySave").disabled=true;
@@ -498,13 +512,13 @@ async function viewReceipt(id){
  if(error){alert("Impossible d’ouvrir le justificatif : "+error.message);return}
  window.open(data.signedUrl,"_blank");
 }
-function openReceiptUpload(entryId){
+function openReceiptUpload(entryId){if(!assertCurrentYear())return;
  if(!["admin","tresorier","saisie"].includes(profile.role)){alert("Ton rôle est en lecture seule.");return}
  let e=entries.find(x=>x.id===entryId);if(!e)return;
  $("receiptCard").dataset.entry=entryId;$("receiptEntryLabel").textContent=(e.piece_number||"")+" · "+e.label;
  $("receiptFile").value="";$("receiptStatus").classList.add("hidden");$("receiptCard").classList.remove("hidden");$("receiptCard").scrollIntoView({behavior:"smooth"});
 }
-async function saveReceipt(){
+async function saveReceipt(){if(!assertCurrentYear())return;
  let entryId=$("receiptCard").dataset.entry,file=$("receiptFile").files[0],e=entries.find(x=>x.id===entryId);
  if(!entryId||!file||!e)return;
  $("receiptSave").disabled=true;$("receiptStatus").textContent="Envoi en cours…";$("receiptStatus").className="notice";
@@ -687,7 +701,7 @@ function renderBankAssist(){
   document.querySelectorAll(".assistLabel").forEach(x=>x.oninput=()=>bankAssist[+x.dataset.k].label=x.value);
   document.querySelectorAll(".assistCat").forEach(x=>x.onchange=()=>bankAssist[+x.dataset.k].category_id=x.value);
 }
-async function validateBankAssist(){
+async function validateBankAssist(){if(!assertCurrentYear())return;
   if(bankIntegrityNotice())return;
    if(!bankStatementId||bankRows.some(r=>!isUuid(r.id)))return alert("Charge d’abord un relevé partagé vérifié avant la validation groupée.");
   let todo=bankAssist.filter(p=>p.selected);
@@ -764,7 +778,7 @@ function renderBank(){
  document.querySelectorAll(".bankCreate").forEach(b=>b.addEventListener("click",()=>createFromBank(Number(b.dataset.i))));
  buildBankAssist();
 }
-function createFromBank(i){
+function createFromBank(i){if(!assertCurrentYear())return;
  let r=bankRows[i];if(!r)return;
   if(bankIntegrityNotice())return;
   if(!bankStatementId||!isUuid(r.id)){alert("Enregistre puis recharge le relevé partagé avant de créer une écriture.");return;}
@@ -780,7 +794,7 @@ function createFromBank(i){
  $("entryNotes").value="Créée depuis le rapprochement bancaire.";
  entryMsg("🏦 Écriture préparée depuis un mouvement bancaire. À la validation, le rapprochement sera automatique.","ok");
 }
-async function importBank(){
+async function importBank(){if(!assertCurrentYear())return;
  let f=$("bankFile").files[0];if(!f)return;
  try{
    $("bankNotice").textContent="Lecture du relevé…";$("bankNotice").className="notice";
@@ -804,7 +818,7 @@ function bankPeriod(){
  let ds=bankRows.map(r=>isoGuess(r.date)).filter(d=>/^\d{4}-\d{2}-\d{2}$/.test(d)).sort();
  return ds.length?{start:ds[0],end:ds[ds.length-1]}:null;
 }
-async function saveSharedBank(){
+async function saveSharedBank(){if(!assertCurrentYear())return;
  if(!["admin","tresorier"].includes(profile?.role)){alert("Réservé à l’administrateur et au trésorier.");return}
  if(bankIntegrityNotice())return;
   if(!fy||!bankRows.length){$("bankNotice").textContent="Importe d’abord un relevé bancaire.";$("bankNotice").className="notice err";return}
@@ -873,7 +887,7 @@ async function saveSharedBank(){
  finally{$("bankSaveBtn").disabled=false}
 }
 // Réparation ponctuelle et conservatrice : ne modifie que les montants des 12 mouvements existants.
-async function repairOctoberFromCsv(){
+async function repairOctoberFromCsv(){if(!assertCurrentYear())return;
  if(!["admin","tresorier"].includes(profile?.role))return alert("Réservé à l’administrateur et au trésorier.");
  const expected=[
   ["2025-10-06",59.14,/VIR INST RE|SUMUP/i],
@@ -944,7 +958,7 @@ async function loadSharedBank(){
  bankRows=(tx||[]).map(x=>({id:x.id,date:x.transaction_date,label:x.label,amount:Number(x.amount),match:x.matched_entry_id,status:x.reconciliation_status}));
  $("bankFile").value="";renderBank();if(!bankIntegrityNotice()){$("bankNotice").textContent="Relevé partagé chargé : sommes cohérentes avec les totaux enregistrés. Contrôle des montants individuels nécessaire.";$("bankNotice").className="notice ok";}
 }
-async function persistBankMatch(i){
+async function persistBankMatch(i){if(!assertCurrentYear())return false;
  if(!bankStatementId)return false;
   let r=bankRows[i];if(!r||!isUuid(r.id))return false;
  let payload={matched_entry_id:r.match||null,reconciliation_status:r.status,reconciled_by:r.match?user.id:null,reconciled_at:r.match?new Date().toISOString():null};
@@ -1099,9 +1113,9 @@ async function downloadBankRepairBackup(){
    await navigator.share({files:[file],title:"Sauvegarde bancaire RCSQ"});
    status.textContent="Menu de partage ouvert. Vérifie que le CSV est bien enregistré dans Fichiers avant toute correction.";
   }else{
-   const url=URL.createObjectURL(blob),a=document.createElement("a");
+   const url=globalThis.URL.createObjectURL(blob),a=document.createElement("a");
    a.href=url;a.download=fileName;document.body.append(a);a.click();a.remove();
-   setTimeout(()=>URL.revokeObjectURL(url),60000);
+   setTimeout(()=>globalThis.URL.revokeObjectURL(url),60000);
    status.textContent="Téléchargement demandé. Vérifie dans Téléchargements ou Fichiers que le CSV existe.";
   }
   bankRepairBackupDownloaded=true;$("bankRepairApply").disabled=false;
@@ -1111,7 +1125,7 @@ async function downloadBankRepairBackup(){
  }
 }
 
-async function applyBankRepair(){
+async function applyBankRepair(){if(!assertCurrentYear())return;
  if(!bankRepairBackupDownloaded||!bankRepairCandidates.length)return;
  if(!["admin","tresorier"].includes(profile?.role))return alert("Accès non autorisé.");
  if(!confirm(`As-tu vérifié que la sauvegarde CSV est bien enregistrée ?\n\n${bankRepairCandidates.length} montant(s) seront corrigés dans Supabase. Les opérations rapprochées ou incertaines sont exclues.`))return;
@@ -1172,13 +1186,13 @@ async function shareBatchAudit(){
 }
 function exportBatchAudit(){
  if(!batchAuditResults.length)return auditShareMessage("Lance d’abord le contrôle des relevés.",true);
- const url=URL.createObjectURL(new Blob([batchAuditCsvText()],{type:"text/csv;charset=utf-8"})),a=document.createElement("a");
- a.href=url;a.download="diagnostic-bancaire-rcsq.csv";document.body.appendChild(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(url),30000);
+ const url=globalThis.URL.createObjectURL(new Blob([batchAuditCsvText()],{type:"text/csv;charset=utf-8"})),a=document.createElement("a");
+ a.href=url;a.download="diagnostic-bancaire-rcsq.csv";document.body.appendChild(a);a.click();a.remove();setTimeout(()=>globalThis.URL.revokeObjectURL(url),30000);
  auditShareMessage("Téléchargement demandé. Sur iPhone, utilise plutôt « Partager le diagnostic » si aucun fichier n’apparaît.");
 }
 $("bankBatchRun").addEventListener("click",runBatchAudit);
 $("bankBatchExport").addEventListener("click",exportBatchAudit);$("bankBatchShare").addEventListener("click",shareBatchAudit);
-function csv(){let rows=[["Pièce","Date","Type","Libellé","Tiers","Catégorie","Compte","Montant","Statut"],...entries.map(e=>[e.piece_number,e.entry_date,e.type,e.label,e.third_party||"",catName(e.category_id),accName(e.account_id),e.amount,e.status])];let s=rows.map(r=>r.map(v=>'"'+String(v).replaceAll('"','""')+'"').join(";")).join("\n"),blob=new Blob(["\ufeff"+s],{type:"text/csv;charset=utf-8"}),a=document.createElement("a");a.href=URL.createObjectURL(blob);a.download="livre-comptes-"+(fy?.label||"RCSQ")+".csv";a.click();setTimeout(()=>URL.revokeObjectURL(a.href),1000)}
+function csv(){let rows=[["Pièce","Date","Type","Libellé","Tiers","Catégorie","Compte","Montant","Statut"],...entries.map(e=>[e.piece_number,e.entry_date,e.type,e.label,e.third_party||"",catName(e.category_id),accName(e.account_id),e.amount,e.status])];let s=rows.map(r=>r.map(v=>'"'+String(v).replaceAll('"','""')+'"').join(";")).join("\n"),blob=new Blob(["\ufeff"+s],{type:"text/csv;charset=utf-8"}),a=document.createElement("a");a.href=globalThis.URL.createObjectURL(blob);a.download="livre-comptes-"+(fy?.label||"RCSQ")+".csv";a.click();setTimeout(()=>globalThis.URL.revokeObjectURL(a.href),1000)}
 function esc(s){return String(s??"").replace(/[&<>"']/g,m=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[m]))}
 $("togglePassword").addEventListener("click",togglePassword);$("forgotPassword").addEventListener("click",forgotPassword);$("loginBtn").addEventListener("click",login);$("signupBtn").addEventListener("click",signup);$("logoutBtn").addEventListener("click",async()=>{await sb.auth.signOut();location.reload()});
 document.querySelectorAll("nav button").forEach(b=>b.addEventListener("click",()=>showTab(b.dataset.tab)));document.querySelectorAll(".newEntry").forEach(b=>b.addEventListener("click",()=>openEntry(b.dataset.type)));
