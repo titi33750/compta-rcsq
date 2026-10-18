@@ -1117,15 +1117,22 @@ async function applyBankRepair(){
  if(!confirm(`As-tu vérifié que la sauvegarde CSV est bien enregistrée ?\n\n${bankRepairCandidates.length} montant(s) seront corrigés dans Supabase. Les opérations rapprochées ou incertaines sont exclues.`))return;
  if(!confirm("Dernière confirmation : modifier les montants bancaires sélectionnés ? Cette action écrit dans Supabase."))return;
  const btn=$("bankRepairApply"),status=$("bankRepairStatus");btn.disabled=true;$("bankBatchRun").disabled=true;
- let done=0;
+  let done=0;
  try{
-  for(const x of bankRepairCandidates){
+   // Précontrôle de toutes les lignes avant la première écriture.
+   for(const x of bankRepairCandidates){
+     const pre=await sb.from("bank_transactions").select("id,statement_id,transaction_date,amount,label,matched_entry_id,reconciliation_status").eq("id",x.dbId).single();
+     if(pre.error)throw pre.error;
+     const r=pre.data;
+     if(!r||r.statement_id!==x.statementId||r.transaction_date!==x.dbDate||bankCents(r.amount)!==bankCents(x.dbAmount)||r.matched_entry_id||r.reconciliation_status==="rapproche"||r.label!==x.dbLabel)throw new Error("Précontrôle refusé : une opération a changé ou est rapprochée. Aucune correction lancée.");
+   }
+   for(const x of bankRepairCandidates){
    status.textContent=`Vérification et correction ${done+1}/${bankRepairCandidates.length}…`;
-   const read=await sb.from("bank_transactions").select("id,statement_id,transaction_date,amount,label,matched_entry_id").eq("id",x.dbId).single();
+   const read=await sb.from("bank_transactions").select("id,statement_id,transaction_date,amount,label,matched_entry_id,reconciliation_status").eq("id",x.dbId).single();
    if(read.error)throw read.error;
    const current=read.data;
-   if(!current||current.statement_id!==x.statementId||current.transaction_date!==x.dbDate||bankCents(current.amount)!==bankCents(x.dbAmount)||current.matched_entry_id||current.label!==x.dbLabel)throw new Error("Une opération a changé depuis le diagnostic. Arrêt de sécurité.");
-   const upd=await sb.from("bank_transactions").update({amount:x.pdfAmount}).eq("id",x.dbId).eq("statement_id",x.statementId).eq("amount",x.dbAmount).is("matched_entry_id",null).select("id,amount");
+   if(!current||current.statement_id!==x.statementId||current.transaction_date!==x.dbDate||bankCents(current.amount)!==bankCents(x.dbAmount)||(current.matched_entry_id||current.reconciliation_status==="rapproche")||current.label!==x.dbLabel)throw new Error("Une opération a changé depuis le diagnostic. Arrêt de sécurité.");
+   const upd=await sb.from("bank_transactions").update({amount:x.pdfAmount}).eq("id",x.dbId).eq("statement_id",x.statementId).eq("amount",x.dbAmount).is("matched_entry_id",null).neq("reconciliation_status","rapproche").select("id,amount");
    if(upd.error)throw upd.error;
    if(upd.data?.length!==1||bankCents(upd.data[0].amount)!==bankCents(x.pdfAmount))throw new Error("Correction non confirmée par la base. Arrêt de sécurité.");
    done++;
