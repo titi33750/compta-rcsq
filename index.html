@@ -51,8 +51,30 @@ table{width:100%;border-collapse:collapse;font-size:14px}th,td{text-align:left;p
 }
 
 </style>
+
+<style id="rcsq-print-v1">
+#rcsqPrintSheet{display:none}
+@media print{
+ @page{size:A4 portrait;margin:13mm 11mm 15mm}
+ html,body{background:white!important;color:#17223b!important;margin:0!important;padding:0!important}
+ body > header,body > main{display:none!important}
+ #rcsqPrintSheet{display:block!important;position:static!important;width:100%!important;color:#17223b;font:10pt Arial,sans-serif}
+ #rcsqPrintSheet .printHead{border-bottom:3px solid #123f8c;padding-bottom:11px;margin-bottom:15px;display:flex;align-items:center;justify-content:space-between;gap:12px}
+ #rcsqPrintSheet .printClub{font-size:17pt;font-weight:800;color:#123f8c}
+ #rcsqPrintSheet .printTitle{font-size:15pt;font-weight:800;margin:14px 0 5px;color:#17223b}
+ #rcsqPrintSheet .printSub{font-size:9pt;color:#4b5c77;margin-bottom:13px}
+ #rcsqPrintSheet table{width:100%;border-collapse:collapse;table-layout:fixed;font-size:8pt}
+ #rcsqPrintSheet th{background:#eaf0fa!important;color:#123f8c!important;-webkit-print-color-adjust:exact;print-color-adjust:exact;text-align:left;border-bottom:1px solid #9baecb;padding:7px 5px;overflow-wrap:anywhere}
+ #rcsqPrintSheet td{border-bottom:1px solid #d9e2ef;padding:6px 5px;overflow-wrap:anywhere;vertical-align:top}
+ #rcsqPrintSheet tr{break-inside:avoid;page-break-inside:avoid}
+ #rcsqPrintSheet thead{display:table-header-group}
+ #rcsqPrintSheet .printTotals{margin-top:14px;padding:10px 0;border-top:2px solid #123f8c;display:flex;justify-content:flex-end;gap:20px;font-weight:800}
+ #rcsqPrintSheet .printFooter{margin-top:20px;padding-top:8px;border-top:1px solid #d9e2ef;font-size:8pt;color:#65738a}
+}
+</style>
 </head>
 <body>
+<section id="rcsqPrintSheet" aria-hidden="true"></section>
 <header><div class="head"><div><h1>🏉 Compta RCSQ V2</h1><div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap"><strong>📅 Exercice</strong><select id="exerciseSelect" style="width:auto;min-width:150px;padding:8px 10px"></select></div><p id="exerciseHead"></p></div><div id="headerUser"></div></div></header>
 <main>
 <section id="loginView" class="card login">
@@ -81,7 +103,7 @@ table{width:100%;border-collapse:collapse;font-size:14px}th,td{text-align:left;p
 </div>
 
 <div id="ledger" class="tab hidden">
-<div class="card"><div class="sectionTitle"><div><h2>Livre de comptes</h2><small id="period"></small></div><div class="row"><button id="csvBtn" class="btn light">Exporter CSV</button><button onclick="window.print()" class="btn light">Imprimer / PDF</button></div></div><div class="tablewrap ledgerDesktop"><table><thead><tr><th>Pièce</th><th>Date</th><th>Type</th><th>Libellé</th><th>Tiers</th><th>Catégorie</th><th>Compte</th><th>Montant</th><th>Statut</th></tr></thead><tbody id="ledgerBody"></tbody></table></div><div id="ledgerMobile" class="ledgerMobile"></div></div>
+<div class="card"><div class="sectionTitle"><div><h2>Livre de comptes</h2><small id="period"></small></div><div class="row"><button id="csvBtn" class="btn light">Exporter CSV</button><button onclick="printRcsqReport('ledger')" class="btn light">Imprimer / PDF</button></div></div><div class="tablewrap ledgerDesktop"><table><thead><tr><th>Pièce</th><th>Date</th><th>Type</th><th>Libellé</th><th>Tiers</th><th>Catégorie</th><th>Compte</th><th>Montant</th><th>Statut</th></tr></thead><tbody id="ledgerBody"></tbody></table></div><div id="ledgerMobile" class="ledgerMobile"></div></div>
 </div>
 
 <div id="budget" class="tab hidden">
@@ -1270,9 +1292,36 @@ function esc(s){return String(s??"").replace(/[&<>"']/g,m=>({"&":"&amp;","<":"&l
 $("togglePassword").addEventListener("click",togglePassword);$("forgotPassword").addEventListener("click",forgotPassword);$("loginBtn").addEventListener("click",login);$("signupBtn").addEventListener("click",signup);$("logoutBtn").addEventListener("click",async()=>{await sb.auth.signOut();location.reload()});
 document.querySelectorAll("nav button").forEach(b=>b.addEventListener("click",()=>showTab(b.dataset.tab)));document.querySelectorAll(".newEntry").forEach(b=>b.addEventListener("click",()=>openEntry(b.dataset.type)));
 document.querySelector(".gotoLedger").addEventListener("click",()=>showTab("ledger"));document.querySelector(".gotoBudget").addEventListener("click",()=>showTab("budget"));$("closeEntry").addEventListener("click",()=> $("entryCard").classList.add("hidden"));
-$("exerciseSelect").addEventListener("change",changeFiscalYear);$("expenseReportRefresh").addEventListener("click",renderExpenseReport);$("expenseReportDate").addEventListener("change",renderExpenseReport);$("expenseReportCsv").addEventListener("click",expenseReportCsv);$("expenseReportPrint").addEventListener("click",()=>window.print());$("draftBtn").addEventListener("click",()=>saveEntry("brouillon"));$("validateBtn").addEventListener("click",()=>saveEntry("validee"));$("refreshBtn").addEventListener("click",async()=>{await loadEntries();renderAll()});$("csvBtn").addEventListener("click",csv);$("budgetEditClose").addEventListener("click",()=>$("budgetEdit").classList.add("hidden"));$("budgetEditSave").addEventListener("click",saveBudgetEdit);$("receiptClose").addEventListener("click",()=>$("receiptCard").classList.add("hidden"));$("receiptSave").addEventListener("click",saveReceipt);$("editEntryClose").addEventListener("click",()=>$("editEntryCard").classList.add("hidden"));$("editEntrySave").addEventListener("click",saveEntryEdit);$("usersRefreshBtn").addEventListener("click",loadUsers);$("bankImportBtn").addEventListener("click",importBank);$("bankRepairOctober").addEventListener("click",repairOctoberFromCsv);$("bankSaveBtn").addEventListener("click",saveSharedBank);$("bankLoadBtn").addEventListener("click",loadSharedBank);$("bankAssistSelect").addEventListener("click",()=>{bankAssist.forEach(p=>p.selected=true);renderBankAssist()});$("bankAssistValidate").addEventListener("click",validateBankAssist);$("bankClearBtn").addEventListener("click",()=>{bankRows=[];bankMeta={opening:null,closing:null,debits:0,credits:0};bankStatementId=null;$("bankFile").value="";$("bankNotice").textContent="Import vidé.";$("bankNotice").className="notice";renderBank()});
+$("exerciseSelect").addEventListener("change",changeFiscalYear);$("expenseReportRefresh").addEventListener("click",renderExpenseReport);$("expenseReportDate").addEventListener("change",renderExpenseReport);$("expenseReportCsv").addEventListener("click",expenseReportCsv);$("expenseReportPrint").addEventListener("click",()=>printRcsqReport("expenses"));$("draftBtn").addEventListener("click",()=>saveEntry("brouillon"));$("validateBtn").addEventListener("click",()=>saveEntry("validee"));$("refreshBtn").addEventListener("click",async()=>{await loadEntries();renderAll()});$("csvBtn").addEventListener("click",csv);$("budgetEditClose").addEventListener("click",()=>$("budgetEdit").classList.add("hidden"));$("budgetEditSave").addEventListener("click",saveBudgetEdit);$("receiptClose").addEventListener("click",()=>$("receiptCard").classList.add("hidden"));$("receiptSave").addEventListener("click",saveReceipt);$("editEntryClose").addEventListener("click",()=>$("editEntryCard").classList.add("hidden"));$("editEntrySave").addEventListener("click",saveEntryEdit);$("usersRefreshBtn").addEventListener("click",loadUsers);$("bankImportBtn").addEventListener("click",importBank);$("bankRepairOctober").addEventListener("click",repairOctoberFromCsv);$("bankSaveBtn").addEventListener("click",saveSharedBank);$("bankLoadBtn").addEventListener("click",loadSharedBank);$("bankAssistSelect").addEventListener("click",()=>{bankAssist.forEach(p=>p.selected=true);renderBankAssist()});$("bankAssistValidate").addEventListener("click",validateBankAssist);$("bankClearBtn").addEventListener("click",()=>{bankRows=[];bankMeta={opening:null,closing:null,debits:0,credits:0};bankStatementId=null;$("bankFile").value="";$("bankNotice").textContent="Import vidé.";$("bankNotice").className="notice";renderBank()});
 sb.auth.onAuthStateChange((event,session)=>{if(event==="SIGNED_IN"&&session&&!user){user=session.user;setTimeout(boot,0)}});
 boot();
 })();
+</script>
+<script>
+
+/* Documents d'impression independants de l'interface mobile. Aucun changement en base. */
+function printRcsqReport(kind){
+ const sheet=document.getElementById('rcsqPrintSheet');if(!sheet||!fy)return;
+ const isExpenses=kind==='expenses';
+ const title=isExpenses?'ÉTAT DES DÉPENSES':'LIVRE DE COMPTES';
+ const subtitle=isExpenses?document.getElementById('expenseReportPeriod')?.textContent||'':`Exercice ${fy.label} · du ${frDate(fy.start_date)} au ${frDate(fy.end_date)}`;
+ const source=isExpenses?document.querySelector('#expensesReport table'):null;
+ let table='';let totals='';
+ if(isExpenses){
+  const original=source||document.querySelector('#expensesReportBody')?.closest('table');
+  table=original?original.outerHTML:'<p>Aucun tableau disponible.</p>';
+ }else{
+  const list=[...entries].sort((a,b)=>a.entry_date.localeCompare(b.entry_date));
+  const rows=list.map(e=>`<tr><td>${esc(e.piece_number||'')}</td><td>${frDate(e.entry_date)}</td><td>${esc(e.type||'')}</td><td>${esc(e.label||'')}</td><td>${esc(e.third_party||'')}</td><td>${esc(catName(e.category_id))}</td><td>${esc(accName(e.account_id))}</td><td style="text-align:right">${euro(e.amount)}</td><td>${esc(e.status||'')}</td></tr>`).join('');
+  table=`<table><colgroup><col style="width:12%"><col style="width:9%"><col style="width:8%"><col style="width:16%"><col style="width:11%"><col style="width:14%"><col style="width:10%"><col style="width:11%"><col style="width:9%"></colgroup><thead><tr><th>Pièce</th><th>Date</th><th>Type</th><th>Libellé</th><th>Tiers</th><th>Catégorie</th><th>Compte</th><th>Montant</th><th>Statut</th></tr></thead><tbody>${rows||'<tr><td colspan="9">Aucune écriture pour cet exercice.</td></tr>'}</tbody></table>`;
+  const valid=list.filter(e=>e.status==='validee');
+  const income=valid.filter(e=>e.type==='recette').reduce((sum,e)=>sum+Number(e.amount||0),0);
+  const expense=valid.filter(e=>e.type==='depense').reduce((sum,e)=>sum+Number(e.amount||0),0);
+  totals=`<div class="printTotals"><span>Recettes : ${euro(income)}</span><span>Dépenses : ${euro(expense)}</span><span>Solde : ${euro(income-expense)}</span></div>`;
+ }
+ sheet.innerHTML=`<div class="printHead"><div><div class="printClub">🏉 RUGBY CLUB SAINT-QUENTIN DE BARON</div><div>Comptabilité du RCSQ</div></div><div style="font-size:9pt;text-align:right">Exercice ${esc(fy.label)}</div></div><div class="printTitle">${title}</div><div class="printSub">${esc(subtitle)}</div>${table}${totals}<div class="printFooter">Rugby Club Saint-Quentin de Baron · Document établi depuis Compta RCSQ · ${new Date().toLocaleDateString('fr-FR')}</div>`;
+ window.print();
+}
+
 </script>
 </body></html>
