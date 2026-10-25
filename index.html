@@ -556,9 +556,9 @@ function entryMsg(m,k){$("entryStatus").textContent=m;$("entryStatus").className
 function showTab(id){document.querySelectorAll(".tab").forEach(x=>x.classList.add("hidden"));$(id).classList.remove("hidden");document.querySelectorAll("nav button").forEach(x=>x.classList.toggle("active",x.dataset.tab===id))}
 
 
-async function fillEditCategories(selected=""){let t=$("editType").value;$("editCategory").innerHTML='<option value="">Sans catégorie</option>'+cats.filter(c=>c.type===t).map(c=>`<option value="${c.id}">${esc(catName(c.id))}</option>`).join("");$("editCategory").value=selected||"";}
+function fillEditCategories(selected=""){let t=$("editType").value;$("editCategory").innerHTML='<option value="">Sans catégorie</option>'+cats.filter(c=>c.type===t).map(c=>`<option value="${c.id}">${esc(catName(c.id))}</option>`).join("");$("editCategory").value=selected||"";}
 $("editType").addEventListener("change",()=>fillEditCategories());
-function openEntryEdit(entryId){if(!assertCurrentYear())return;
+async function openEntryEdit(entryId){if(!assertCurrentYear())return;
  if(!["admin","tresorier","saisie"].includes(profile.role)){alert("Ton rôle est en lecture seule.");return}
  let e=entries.find(x=>x.id===entryId);if(!e)return;
  $("editEntryCard").dataset.entry=entryId;$("editEntryPiece").textContent=e.piece_number+" · "+(e.type==="depense"?"Dépense":"Recette");
