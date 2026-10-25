@@ -235,7 +235,7 @@ table{width:100%;border-collapse:collapse;font-size:14px}th,td{text-align:left;p
 <div class="formgrid">
 <div><label>Date</label><input id="entryDate" type="date"></div>
 <div><label>Montant TTC</label><input id="entryAmount" type="number" min="0.01" step="0.01" inputmode="decimal"></div>
-<div><label>Libellé</label><input id="entryLabel"></div>
+<div><label>Libellé</label><input id="entryLabel"></div><div><label>Numéro de facture</label><input id="entryInvoiceNumber" placeholder="Ex. FAC-2026-001"></div>
 <div><label>Tiers / fournisseur</label><input id="entryThird"></div>
 <div><label>Catégorie budgétaire</label><select id="entryCategory"></select></div>
 <div><label>Compte</label><select id="entryAccount"></select></div>
@@ -350,7 +350,7 @@ function renderAll(){
  let valid=entries.filter(e=>e.status==="validee"),inc=valid.filter(e=>e.type==="recette").reduce((s,e)=>s+Number(e.amount),0),exp=valid.filter(e=>e.type==="depense").reduce((s,e)=>s+Number(e.amount),0);
  $("income").textContent=euro(inc);$("expense").textContent=euro(exp);$("balance").textContent=euro(inc-exp);$("count").textContent=entries.length;
  $("recent").innerHTML=entries.length?entries.slice(0,6).map(e=>`<div style="padding:11px 0;border-bottom:1px solid #e6ebf3"><strong>${esc(e.label)}</strong><br><small>${frDate(e.entry_date)} · ${esc(e.piece_number)} · ${e.status}</small><span style="float:right;font-weight:800" class="${e.type==="recette"?"green":"red"}">${e.type==="recette"?"+":"−"} ${euro(e.amount)}</span></div>`).join(""):"Aucune opération pour le moment.";
- $("ledgerBody").innerHTML=entries.map(e=>`<tr><td>${esc(e.piece_number)}</td><td>${frDate(e.entry_date)}</td><td>${e.type}</td><td>${esc(e.label)}</td><td>${esc(e.third_party||"")}</td><td>${esc(catName(e.category_id))}</td><td>${esc(accName(e.account_id))}</td><td>${euro(e.amount)}</td><td>${e.status}</td></tr>`).join("");
+ $("ledgerBody").innerHTML=entries.map(e=>`<tr><td>${esc(e.piece_number)}</td><td>${frDate(e.entry_date)}</td><td>${e.type}</td><td>${esc(e.label)}</td><td>${esc(e.third_party||"")}</td><td>${esc(catName(e.category_id))}</td><td>${esc(accName(e.account_id))}</td><td class="${e.type==="depense"?"red":"green"}">${e.type==="depense"?"− ":"+ "}${euro(e.amount)}</td><td>${e.status}</td></tr>`).join("");
  $("ledgerMobile").innerHTML=entries.length?entries.map(e=>{
  let att=attachments.find(a=>a.entry_id===e.id);
  return `<article class="ledgerCard">
@@ -432,12 +432,13 @@ function renderExpenseReport(){
    let ce=ge.filter(e=>e.category_id===c.id).sort((a,b)=>a.entry_date.localeCompare(b.entry_date)),cb=children.length?Number(c.planned_amount||0):(c.id===root.id?budget:0),ca=ce.reduce((a,e)=>a+Number(e.amount||0),0);
    if(!cb&&!ca)return;let cr=cb-ca,cp=cb?ca/cb*100:0;
    if(children.length)html+=`<tr style="font-weight:800"><td style="padding-left:20px">${esc(c.name)}</td><td>${euro(ca)}</td><td>${euro(cb)}</td><td>${euro(cr)}</td><td>${cb?cp.toFixed(1).replace(".",",")+" %":"—"}</td></tr>`;
-   ce.forEach(e=>html+=`<tr><td style="padding-left:${children.length?38:20}px"><small>${frDate(e.entry_date)} · ${esc(e.piece_number)} · ${esc(e.third_party||"")}</small><br>${esc(e.label)}</td><td>${euro(e.amount)}</td><td></td><td></td><td></td></tr>`);
+   ce.forEach(e=>{let att=attachments.find(a=>a.entry_id===e.id),allowed=["admin","tresorier","saisie"].includes(profile.role);html+=`<tr><td style="padding-left:${children.length?38:20}px"><small>${frDate(e.entry_date)} · ${esc(e.piece_number)} · ${esc(e.third_party||"")}</small><br>${esc(e.label)} <span class="expenseActions" style="float:right;white-space:nowrap">${allowed?`<button type="button" title="Supprimer" class="expenseDelete" data-entry="${e.id}">❌</button> <button type="button" title="Modifier" class="expenseEdit" data-entry="${e.id}">📝</button>`:""} <button type="button" title="Justificatif" class="expenseReceipt" data-entry="${e.id}" ${att?`data-attachment="${att.id}"`:""}>📎</button></span></td><td>${euro(e.amount)}</td><td></td><td></td><td></td></tr>`});
   });
  });
  html+=`<tr style="font-weight:950;border-top:2px solid #17223b"><td>TOTAL GÉNÉRAL</td><td>${euro(totalActual)}</td><td>${euro(totalBudget)}</td><td>${euro(totalRemaining)}</td><td>${totalBudget?totalPct.toFixed(1).replace(".",",")+" %":"—"}</td></tr>`;
- $("expenseReportBody").innerHTML=html;$("expenseReportEmpty").classList.toggle("hidden",valid.length>0||totalBudget>0);
+ $("expenseReportBody").innerHTML=html;document.querySelectorAll(".expenseEdit").forEach(b=>b.onclick=()=>openEntryEdit(b.dataset.entry));document.querySelectorAll(".expenseDelete").forEach(b=>b.onclick=()=>deleteExpenseEntry(b.dataset.entry));document.querySelectorAll(".expenseReceipt").forEach(b=>b.onclick=()=>b.dataset.attachment?viewReceipt(b.dataset.attachment):alert("Aucun justificatif PDF enregistré pour cette écriture."));$("expenseReportEmpty").classList.toggle("hidden",valid.length>0||totalBudget>0);
 }
+async function deleteExpenseEntry(id){if(!assertCurrentYear()||!["admin","tresorier"].includes(profile.role))return alert("Suppression réservée à la trésorerie ou à l’administration.");let e=entries.find(x=>x.id===id);if(!e||e.type!=="depense")return;if(!confirm(`Supprimer définitivement cette dépense : ${e.label} (${euro(e.amount)}) ?\nCette opération peut être liée à un rapprochement bancaire. Vérifie-le avant de confirmer.`))return;let {error}=await sb.from("entries").delete().eq("id",id);if(error)return alert("Suppression refusée : "+error.message);await loadEntries();renderAll();renderBank();}
 function expenseReportCsv(){
  if(!fy)return;let cutoff=expenseReportCutoff(),valid=entries.filter(e=>e.status==="validee"&&e.type==="depense"&&e.entry_date>=fy.start_date&&e.entry_date<=cutoff);
  let rows=[["Poste","Sous-poste","Pièce","Date","Fournisseur / tiers","Libellé","TTC","Budget du sous-poste"]];
@@ -533,7 +534,7 @@ async function saveEntry(status){if(!assertCurrentYear())return;
  if(!["admin","tresorier","saisie"].includes(profile.role))return entryMsg("Ton rôle est en lecture seule.","err");
  const amount=Number($("entryAmount").value),label=$("entryLabel").value.trim(),entryDate=$("entryDate").value;if(!fy||!Number.isFinite(amount)||amount<=0||!label||!entryDate)return entryMsg("Date, montant et libellé sont obligatoires.","err");let dateFy=fiscalYearForDate(entryDate);if(!dateFy)return entryMsg("Cette date ne correspond à aucun exercice comptable configuré.","err");if(dateFy.id!==fy.id)return entryMsg(`Cette date appartient à l’exercice ${dateFy.label}. Sélectionne cet exercice avant d’enregistrer.`,"err");
  let piece=newUniquePiece(entryType);
- let payload={fiscal_year_id:fy.id,piece_number:piece,entry_date:$("entryDate").value,type:entryType,label,third_party:$("entryThird").value.trim()||null,category_id:$("entryCategory").value||null,account_id:$("entryAccount").value||null,payment_method:$("entryPayment").value||null,amount,notes:$("entryNotes").value.trim()||null,status,created_by:user.id};
+ let payload={fiscal_year_id:fy.id,piece_number:piece,entry_date:$("entryDate").value,type:entryType,label,third_party:$("entryThird").value.trim()||null,category_id:$("entryCategory").value||null,account_id:$("entryAccount").value||null,payment_method:$("entryPayment").value||null,amount,notes:[($("entryInvoiceNumber")?.value.trim()?("N° facture : "+$("entryInvoiceNumber").value.trim()):""),$("entryNotes").value.trim()].filter(Boolean).join("\n")||null,status,created_by:user.id};
  entryMsg("Enregistrement…");
  const {data,error}=await sb.from("entries").insert(payload).select().single();if(error)return entryMsg("Erreur : "+error.message,"err");
  if(pendingBankIndex!==null){
@@ -549,7 +550,7 @@ async function saveEntry(status){if(!assertCurrentYear())return;
  }
  const file=$("entryFile").files[0];
  if(file){let safe=file.name.replace(/[^a-zA-Z0-9._-]/g,"_"),path=`${fy.label}/${data.id}/${Date.now()}-${safe}`;let up=await sb.storage.from("justificatifs").upload(path,file);if(up.error)return entryMsg("Opération enregistrée, mais justificatif non envoyé : "+up.error.message,"err");let ar=await sb.from("attachments").insert({entry_id:data.id,storage_path:path,original_name:file.name,mime_type:file.type||null,size_bytes:file.size,uploaded_by:user.id});if(ar.error)return entryMsg("Opération enregistrée, justificatif envoyé, mais indexation impossible : "+ar.error.message,"err")}
- entryMsg(status==="validee"?"Opération validée ✅":"Brouillon enregistré ✅","ok");$("entryAmount").value="";$("entryLabel").value="";$("entryThird").value="";$("entryNotes").value="";$("entryFile").value="";await loadEntries();renderAll();renderBank();
+ entryMsg(status==="validee"?"Opération validée ✅":"Brouillon enregistré ✅","ok");$("entryAmount").value="";$("entryLabel").value="";$("entryThird").value="";$("entryNotes").value="";$("entryInvoiceNumber").value="";$("entryFile").value="";await loadEntries();renderAll();renderBank();
 }
 function entryMsg(m,k){$("entryStatus").textContent=m;$("entryStatus").className="notice "+(k||"");$("entryStatus").classList.remove("hidden")}
 function showTab(id){document.querySelectorAll(".tab").forEach(x=>x.classList.add("hidden"));$(id).classList.remove("hidden");document.querySelectorAll("nav button").forEach(x=>x.classList.toggle("active",x.dataset.tab===id))}
