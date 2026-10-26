@@ -92,9 +92,9 @@ table{width:100%;border-collapse:collapse;font-size:14px}th,td{text-align:left;p
 <section id="appView" class="hidden">
 <div id="exerciseNotice" class="notice" style="margin-bottom:14px" aria-live="polite"></div>
 <div class="topbar"><div><strong id="welcome">Bienvenue</strong><div class="badge" id="roleBadge">rôle</div></div><button id="logoutBtn" class="btn light">Déconnexion</button></div>
-<nav><button class="active" data-tab="dashboard">Tableau de bord</button><button data-tab="ledger">Livre de comptes</button><button data-tab="budget">Budget</button><button data-tab="expensesReport">📑 État des dépenses</button><button data-tab="bank">Rapprochement bancaire</button><button id="usersTabBtn" class="hidden" data-tab="users">👥 Utilisateurs</button></nav>
+<nav><button class="active" data-tab="dashboard">Tableau de bord</button><button data-tab="ledger">Livre de comptes</button><button data-tab="budget">Budget</button><button data-tab="expensesReport">📑 État des dépenses</button><button data-tab="bank">Rapprochement bancaire</button><button data-tab="documents">📁 Bibliothèque</button><button id="usersTabBtn" class="hidden" data-tab="users">👥 Utilisateurs</button></nav>
 
-<div id="dashboard" class="tab">
+<div id="documents" class="tab hidden"><div class="card"><div class="sectionTitle"><h2>📁 Bibliothèque du RCSQ</h2><button id="docRefresh" class="btn light">🔄 Actualiser</button></div><p>Documents du club, indépendants des factures. Accès réservé aux utilisateurs connectés.</p><div id="docUploadBox" style="padding:14px;border:1px solid #dce3ef;border-radius:12px"><h3>📤 Déposer un document</h3><div class="formgrid"><div><label>Nom</label><input id="docTitle" placeholder="Ex. Statuts du club"></div><div><label>Catégorie</label><select id="docCategory"><option>Statuts et règlements</option><option>AG et procès-verbaux</option><option>Comptabilité et bilans</option><option>Relevés bancaires</option><option>Subventions</option><option>Sponsors et partenariats</option><option>Assurances</option><option>Conventions</option><option>FFR et licences</option><option>École de rugby</option><option>Correspondances</option><option>Autres</option></select></div><div><label>Saison</label><input id="docSeason" value="2026-2027"></div><div><label>Fichier (20 Mo maximum)</label><input id="docFile" type="file" accept=".pdf,.doc,.docx,.xls,.xlsx,.csv,.txt,.odt,.ods,.jpg,.jpeg,.png,.webp"></div><div class="wide"><label>Description facultative</label><input id="docDescription"></div></div><button id="docUpload" class="btn primary" style="margin-top:12px">Enregistrer le document</button></div><div class="formgrid" style="margin:15px 0"><div><label>Rechercher</label><input id="docSearch" placeholder="Nom, description…"></div><div><label>Catégorie</label><select id="docFilter"><option value="">Toutes</option></select></div><div><label>Saison</label><select id="docSeasonFilter"><option value="">Toutes</option></select></div></div><div id="docStatus" class="notice"></div><div id="docList"></div></div></div><div id="dashboard" class="tab">
 <div class="grid">
 <div class="stat"><span>Solde des mouvements</span><strong id="balance">0,00 €</strong></div>
 <div class="stat"><span>Recettes</span><strong id="income" class="green">0,00 €</strong></div>
@@ -553,7 +553,60 @@ async function saveEntry(status){if(!assertCurrentYear())return;
  entryMsg(status==="validee"?"Opération validée ✅":"Brouillon enregistré ✅","ok");$("entryAmount").value="";$("entryLabel").value="";$("entryThird").value="";$("entryNotes").value="";$("entryInvoiceNumber").value="";$("entryFile").value="";await loadEntries();renderAll();renderBank();
 }
 function entryMsg(m,k){$("entryStatus").textContent=m;$("entryStatus").className="notice "+(k||"");$("entryStatus").classList.remove("hidden")}
-function showTab(id){document.querySelectorAll(".tab").forEach(x=>x.classList.add("hidden"));$(id).classList.remove("hidden");document.querySelectorAll("nav button").forEach(x=>x.classList.toggle("active",x.dataset.tab===id))}
+
+let clubDocs=[];
+function docMessage(t,err=false){$("docStatus").textContent=t;$("docStatus").className="notice "+(err?"err":"ok");}
+async function loadClubDocuments(){
+ const {data,error}=await sb.from("club_documents").select("*").order("created_at",{ascending:false});
+ if(error){docMessage("Erreur bibliothèque : "+error.message,true);return;}
+ clubDocs=data||[];
+ const oldCat=$("docFilter").value,oldSeason=$("docSeasonFilter").value;
+ const catsList=[...new Set(clubDocs.map(d=>d.category))].sort(),seasons=[...new Set(clubDocs.map(d=>d.season))].sort().reverse();
+ $("docFilter").innerHTML='<option value="">Toutes</option>'+catsList.map(v=>'<option>'+esc(v)+'</option>').join("");
+ $("docSeasonFilter").innerHTML='<option value="">Toutes</option>'+seasons.map(v=>'<option>'+esc(v)+'</option>').join("");
+ $("docFilter").value=catsList.includes(oldCat)?oldCat:"";$("docSeasonFilter").value=seasons.includes(oldSeason)?oldSeason:"";
+ $("docUploadBox").classList.toggle("hidden",!["admin","tresorier"].includes(profile.role));
+ renderClubDocuments();docMessage(clubDocs.length+" document(s) disponible(s).");
+}
+function renderClubDocuments(){
+ const q=$("docSearch").value.toLocaleLowerCase("fr").trim(),cat=$("docFilter").value,season=$("docSeasonFilter").value;
+ const list=clubDocs.filter(d=>(!q||[d.title,d.category,d.season,d.description,d.original_name].join(" ").toLocaleLowerCase("fr").includes(q))&&(!cat||d.category===cat)&&(!season||d.season===season));
+ $("docList").innerHTML=list.length?list.map(d=>'<div style="padding:14px 0;border-top:1px solid #dce3ef"><strong>📄 '+esc(d.title)+'</strong><br><small>'+esc(d.category)+' · '+esc(d.season)+' · '+esc(d.original_name)+'</small>'+(d.description?'<br><small>'+esc(d.description)+'</small>':'')+'<div style="margin-top:8px;display:flex;gap:8px;flex-wrap:wrap"><button class="btn light docOpen" data-id="'+d.id+'">👁️ Consulter / Télécharger</button>'+(['admin','tresorier'].includes(profile.role)?'<button class="btn light docDelete" data-id="'+d.id+'">🗑️ Supprimer</button>':'')+'</div></div>').join(""):"Aucun document.";
+ document.querySelectorAll(".docOpen").forEach(b=>b.onclick=()=>openClubDocument(b.dataset.id));
+ document.querySelectorAll(".docDelete").forEach(b=>b.onclick=()=>deleteClubDocument(b.dataset.id));
+}
+async function openClubDocument(id){
+ const d=clubDocs.find(x=>x.id===id);if(!d)return;
+ const {data,error}=await sb.storage.from("bibliotheque-rcsq").createSignedUrl(d.storage_path,120);
+ if(error||!data?.signedUrl){docMessage("Impossible d'ouvrir le fichier : "+(error?.message||"lien absent"),true);return;}
+ const a=document.createElement("a");a.href=data.signedUrl;a.target="_blank";a.rel="noopener noreferrer";document.body.appendChild(a);a.click();a.remove();
+}
+async function uploadClubDocument(){
+ if(!["admin","tresorier"].includes(profile.role))return;
+ const f=$("docFile").files[0],title=$("docTitle").value.trim(),season=$("docSeason").value.trim();
+ if(!f||!title||!season){docMessage("Nom, saison et fichier obligatoires.",true);return;}
+ if(f.size>20971520){docMessage("Fichier trop volumineux (20 Mo maximum).",true);return;}
+ if(!["pdf","doc","docx","xls","xlsx","csv","txt","odt","ods","jpg","jpeg","png","webp"].includes(f.name.split(".").pop().toLowerCase())){docMessage("Format non accepté.",true);return;}
+ $("docUpload").disabled=true;docMessage("Envoi en cours…");
+ const path=user.id+"/"+crypto.randomUUID()+"-"+f.name.replace(/[^a-zA-Z0-9._-]/g,"_");
+ try{
+  const u=await sb.storage.from("bibliotheque-rcsq").upload(path,f,{contentType:f.type||"application/octet-stream"});
+  if(u.error)throw u.error;
+  const {error}=await sb.from("club_documents").insert({title,category:$("docCategory").value,season,description:$("docDescription").value.trim()||null,original_name:f.name,storage_path:path,mime_type:f.type||null,size_bytes:f.size,uploaded_by:user.id});
+  if(error){await sb.storage.from("bibliotheque-rcsq").remove([path]);throw error;}
+  $("docTitle").value="";$("docFile").value="";$("docDescription").value="";await loadClubDocuments();docMessage("Document ajouté à la bibliothèque ✅");
+ }catch(e){docMessage("Envoi impossible : "+e.message,true)}finally{$("docUpload").disabled=false;}
+}
+async function deleteClubDocument(id){
+ if(!["admin","tresorier"].includes(profile.role))return;
+ const d=clubDocs.find(x=>x.id===id);if(!d||!confirm("Supprimer définitivement « "+d.title+" » ?"))return;
+ const {error}=await sb.from("club_documents").delete().eq("id",id);
+ if(error){docMessage("Suppression impossible : "+error.message,true);return;}
+ const removed=await sb.storage.from("bibliotheque-rcsq").remove([d.storage_path]);await loadClubDocuments();
+ docMessage(removed.error?"Document retiré de la liste, mais fichier à nettoyer : "+removed.error.message:"Document supprimé.",!!removed.error);
+}
+
+function showTab(id){document.querySelectorAll(".tab").forEach(x=>x.classList.add("hidden"));$(id).classList.remove("hidden");document.querySelectorAll("nav button").forEach(x=>x.classList.toggle("active",x.dataset.tab===id));if(id==="documents")loadClubDocuments()}
 
 
 function updateEditCategories(selected){const type=$("editType").value;const list=cats.filter(c=>c.type===type);$("editCategory").innerHTML='<option value="">Sans catégorie</option>'+list.map(c=>`<option value="${c.id}">${esc(catName(c.id))}</option>`).join("");$("editCategory").value=selected||"";}
@@ -1295,6 +1348,7 @@ $("bankBatchRun").addEventListener("click",runBatchAudit);
 $("bankBatchExport").addEventListener("click",exportBatchAudit);$("bankBatchShare").addEventListener("click",shareBatchAudit);
 function csv(){let rows=[["Pièce","Date","Type","Libellé","Tiers","Catégorie","Compte","Montant","Statut"],...entries.map(e=>[e.piece_number,e.entry_date,e.type,e.label,e.third_party||"",catName(e.category_id),accName(e.account_id),e.amount,e.status])];let s=rows.map(r=>r.map(v=>'"'+String(v).replaceAll('"','""')+'"').join(";")).join("\n"),blob=new Blob(["\ufeff"+s],{type:"text/csv;charset=utf-8"}),a=document.createElement("a");a.href=globalThis.URL.createObjectURL(blob);a.download="livre-comptes-"+(fy?.label||"RCSQ")+".csv";a.click();setTimeout(()=>globalThis.URL.revokeObjectURL(a.href),1000)}
 function esc(s){return String(s??"").replace(/[&<>"']/g,m=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[m]))}
+$("docRefresh").addEventListener("click",loadClubDocuments);$("docUpload").addEventListener("click",uploadClubDocument);["docSearch","docFilter","docSeasonFilter"].forEach(id=>$(id).addEventListener(id==="docSearch"?"input":"change",renderClubDocuments));
 $("togglePassword").addEventListener("click",togglePassword);$("forgotPassword").addEventListener("click",forgotPassword);$("loginBtn").addEventListener("click",login);$("signupBtn").addEventListener("click",signup);$("logoutBtn").addEventListener("click",async()=>{await sb.auth.signOut();location.reload()});
 document.querySelectorAll("nav button").forEach(b=>b.addEventListener("click",()=>showTab(b.dataset.tab)));document.querySelectorAll(".newEntry").forEach(b=>b.addEventListener("click",()=>openEntry(b.dataset.type)));
 document.querySelector(".gotoLedger").addEventListener("click",()=>showTab("ledger"));document.querySelector(".gotoBudget").addEventListener("click",()=>showTab("budget"));$("closeEntry").addEventListener("click",()=> $("entryCard").classList.add("hidden"));
