@@ -107,7 +107,7 @@ table{width:100%;border-collapse:collapse;font-size:14px}th,td{text-align:left;p
 </div>
 
 <div id="ledger" class="tab hidden">
-<div class="card"><div class="sectionTitle"><div><h2>Livre de comptes</h2><small id="period"></small></div><div class="row"><button id="csvBtn" class="btn light">Exporter CSV</button><button id="ledgerPrintBtn" class="btn light">Imprimer / PDF</button></div></div><div class="tablewrap ledgerDesktop"><table><thead><tr><th>Pièce</th><th>Date</th><th>Type</th><th>Libellé</th><th>Tiers</th><th>Catégorie</th><th>Compte</th><th>Montant</th><th>Statut</th></tr></thead><tbody id="ledgerBody"></tbody></table></div><div id="ledgerMobile" class="ledgerMobile"></div></div>
+<div class="card"><div class="sectionTitle"><div><h2>Livre de comptes</h2><small id="period"></small></div><div class="row"><button id="csvBtn" class="btn light">Exporter CSV</button><button id="ledgerPrintBtn" class="btn light">Imprimer / PDF</button></div></div><div style="display:flex;gap:10px;align-items:end;flex-wrap:wrap;margin:12px 0 18px"><div style="flex:1;min-width:190px"><label for="ledgerSearch">🔎 Recherche rapide</label><input id="ledgerSearch" type="search" placeholder="Libellé, tiers, catégorie, montant, date, pièce…" autocomplete="off"></div><button type="button" id="ledgerSearchClear" class="btn light" style="min-height:48px">Effacer</button></div><div id="ledgerSearchCount" role="status" aria-live="polite" style="color:#68758f;margin-bottom:12px"></div><div class="tablewrap ledgerDesktop"><table><thead><tr><th>Pièce</th><th>Date</th><th>Type</th><th>Libellé</th><th>Tiers</th><th>Catégorie</th><th>Compte</th><th>Montant</th><th>Statut</th></tr></thead><tbody id="ledgerBody"></tbody></table></div><div id="ledgerMobile" class="ledgerMobile"></div></div>
 </div>
 
 <div id="budget" class="tab hidden">
@@ -351,22 +351,37 @@ function ledgerReceiptActions(e){
  const canAdd=["admin","tresorier","saisie"].includes(profile.role);
  return '<div class="ledgerReceiptActions" style="margin-top:8px">'+files.map(a=>`<button type="button" class="btn light receiptView" data-id="${esc(a.id)}" style="display:block;margin-top:6px;min-height:44px" title="${esc(a.original_name||"Justificatif")}">📎 Voir le justificatif</button>`).join("")+(canAdd?`<button type="button" class="btn light receiptAdd" data-entry="${esc(e.id)}" style="display:block;margin-top:6px;min-height:44px">📎 Ajouter un justificatif</button>`:"")+'</div>';
 }
-function renderAll(){
- let valid=entries.filter(e=>e.status==="validee"),inc=valid.filter(e=>e.type==="recette").reduce((s,e)=>s+Number(e.amount),0),exp=valid.filter(e=>e.type==="depense").reduce((s,e)=>s+Number(e.amount),0);
- $("income").textContent=euro(inc);$("expense").textContent=euro(exp);$("balance").textContent=euro(inc-exp);$("count").textContent=entries.length;
- $("recent").innerHTML=entries.length?entries.slice(0,6).map(e=>`<div style="padding:11px 0;border-bottom:1px solid #e6ebf3"><strong>${esc(e.label)}</strong><br><small>${frDate(e.entry_date)} · ${esc(e.piece_number)} · ${e.status}</small><span style="float:right;font-weight:800" class="${e.type==="recette"?"green":"red"}">${e.type==="recette"?"+":"−"} ${euro(e.amount)}</span></div>`).join(""):"Aucune opération pour le moment.";
- $("ledgerBody").innerHTML=entries.map(e=>`<tr><td>${esc(e.piece_number)}</td><td>${frDate(e.entry_date)}</td><td>${e.type}</td><td>${esc(e.label)}${["admin","tresorier","saisie"].includes(profile.role)?`<button type="button" class="btn light entryEditBtn" data-entry="${esc(e.id)}" style="display:block;margin-top:8px;min-height:44px;white-space:nowrap" aria-label="Modifier cette opération">✏️ Modifier</button>`:""}${ledgerReceiptActions(e)}</td><td>${esc(e.third_party||"")}</td><td>${esc(catName(e.category_id))}</td><td>${esc(accName(e.account_id))}</td><td class="${e.type==="depense"?"red":"green"}">${e.type==="depense"?"− ":"+ "}${euro(e.amount)}</td><td>${e.status}</td></tr>`).join("");
- $("ledgerMobile").innerHTML=entries.length?entries.map(e=>{
+function filteredLedgerEntries(){
+ const query=norm($("ledgerSearch").value).replace(/€/g,"").trim();
+ const terms=query.split(/\s+/).filter(Boolean);
+ if(!terms.length)return entries;
+ return entries.filter(e=>{
+  const amount=Number(e.amount||0);
+  const hay=norm([e.label,e.third_party,e.piece_number,e.entry_date,frDate(e.entry_date),e.type==="depense"?"dépense":e.type,e.status,e.status==="validee"?"validée":"",catName(e.category_id),accName(e.account_id),e.payment_method,e.notes,euro(amount),amount.toFixed(2),amount.toFixed(2).replace(".",",")].join(" "));
+  return terms.every(term=>hay.includes(term));
+ });
+}
+function renderLedger(){
+ const query=$("ledgerSearch").value.trim(),visible=filteredLedgerEntries();
+ $("ledgerSearchCount").textContent=visible.length+" opération(s) affichée(s) sur "+entries.length+" pour cet exercice";
+ $("ledgerBody").innerHTML=visible.length?visible.map(e=>`<tr><td>${esc(e.piece_number)}</td><td>${frDate(e.entry_date)}</td><td>${e.type}</td><td>${esc(e.label)}${["admin","tresorier","saisie"].includes(profile.role)?`<button type="button" class="btn light entryEditBtn" data-entry="${esc(e.id)}" style="display:block;margin-top:8px;min-height:44px;white-space:nowrap" aria-label="Modifier cette opération">✏️ Modifier</button>`:""}${ledgerReceiptActions(e)}</td><td>${esc(e.third_party||"")}</td><td>${esc(catName(e.category_id))}</td><td>${esc(accName(e.account_id))}</td><td class="${e.type==="depense"?"red":"green"}">${e.type==="depense"?"− ":"+ "}${euro(e.amount)}</td><td>${e.status}</td></tr>`).join(""):`<tr><td colspan="9">${query?"Aucune opération ne correspond à la recherche.":"Aucune opération."}</td></tr>`;
+ $("ledgerMobile").innerHTML=visible.length?visible.map(e=>{
  let att=attachments.find(a=>a.entry_id===e.id);
  return `<article class="ledgerCard">
    <div class="ledgerCardTop"><div><strong>${esc(e.label)}</strong><br><small>${frDate(e.entry_date)} · ${esc(e.piece_number)}</small></div><div class="ledgerCardAmount ${e.type==="recette"?"green":"red"}">${e.type==="recette"?"+":"−"} ${euro(e.amount)}</div></div>
    <div class="ledgerMeta"><strong>${e.type==="recette"?"Recette":"Dépense"}</strong> · ${esc(e.status)}<br>Catégorie : ${esc(catName(e.category_id))}<br>Compte : ${esc(accName(e.account_id))}${e.third_party?`<br>Tiers : ${esc(e.third_party)}`:""}</div>
    <div style="margin-top:12px">${att?`<button class="btn light receiptView" data-id="${att.id}">📎 Voir le justificatif</button> <small>${esc(att.original_name)}</small>`:`<div style="color:#a15c00;font-weight:750;margin-bottom:8px">⚠️ Justificatif manquant</div><button class="btn light receiptAdd" data-entry="${e.id}">📎 Ajouter un justificatif</button>`}
  ${["admin","tresorier","saisie"].includes(profile.role)?`<button class="btn light entryEditBtn" data-entry="${e.id}" style="margin-top:8px">✏️ Modifier</button>`:""}</div>
- </article>`}).join(""):"Aucune opération.";
+ </article>`}).join(""):(query?"Aucune opération ne correspond à la recherche.":"Aucune opération.");
  document.querySelectorAll(".receiptView").forEach(b=>b.addEventListener("click",()=>viewReceipt(b.dataset.id)));
  document.querySelectorAll(".receiptAdd").forEach(b=>b.addEventListener("click",()=>openReceiptUpload(b.dataset.entry)));
  document.querySelectorAll(".entryEditBtn").forEach(b=>b.addEventListener("click",()=>openEntryEdit(b.dataset.entry)));
+}
+function renderAll(){
+ let valid=entries.filter(e=>e.status==="validee"),inc=valid.filter(e=>e.type==="recette").reduce((s,e)=>s+Number(e.amount),0),exp=valid.filter(e=>e.type==="depense").reduce((s,e)=>s+Number(e.amount),0);
+ $("income").textContent=euro(inc);$("expense").textContent=euro(exp);$("balance").textContent=euro(inc-exp);$("count").textContent=entries.length;
+ $("recent").innerHTML=entries.length?entries.slice(0,6).map(e=>`<div style="padding:11px 0;border-bottom:1px solid #e6ebf3"><strong>${esc(e.label)}</strong><br><small>${frDate(e.entry_date)} · ${esc(e.piece_number)} · ${e.status}</small><span style="float:right;font-weight:800" class="${e.type==="recette"?"green":"red"}">${e.type==="recette"?"+":"−"} ${euro(e.amount)}</span></div>`).join(""):"Aucune opération pour le moment.";
+ renderLedger();
  renderBudget();
 }
 function renderBudget(){
@@ -1353,6 +1368,7 @@ $("bankBatchRun").addEventListener("click",runBatchAudit);
 $("bankBatchExport").addEventListener("click",exportBatchAudit);$("bankBatchShare").addEventListener("click",shareBatchAudit);
 function csv(){let rows=[["Pièce","Date","Type","Libellé","Tiers","Catégorie","Compte","Montant","Statut"],...entries.map(e=>[e.piece_number,e.entry_date,e.type,e.label,e.third_party||"",catName(e.category_id),accName(e.account_id),e.amount,e.status])];let s=rows.map(r=>r.map(v=>'"'+String(v).replaceAll('"','""')+'"').join(";")).join("\n"),blob=new Blob(["\ufeff"+s],{type:"text/csv;charset=utf-8"}),a=document.createElement("a");a.href=globalThis.URL.createObjectURL(blob);a.download="livre-comptes-"+(fy?.label||"RCSQ")+".csv";a.click();setTimeout(()=>globalThis.URL.revokeObjectURL(a.href),1000)}
 function esc(s){return String(s??"").replace(/[&<>"']/g,m=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[m]))}
+$("ledgerSearch").addEventListener("input",renderLedger);$("ledgerSearchClear").addEventListener("click",()=>{$("ledgerSearch").value="";renderLedger();$("ledgerSearch").focus()});
 $("docRefresh").addEventListener("click",loadClubDocuments);$("docUpload").addEventListener("click",uploadClubDocument);["docSearch","docFilter","docSeasonFilter"].forEach(id=>$(id).addEventListener(id==="docSearch"?"input":"change",renderClubDocuments));
 $("togglePassword").addEventListener("click",togglePassword);$("forgotPassword").addEventListener("click",forgotPassword);$("loginBtn").addEventListener("click",login);$("signupBtn").addEventListener("click",signup);$("logoutBtn").addEventListener("click",async()=>{await sb.auth.signOut();location.reload()});
 document.querySelectorAll("nav button").forEach(b=>b.addEventListener("click",()=>showTab(b.dataset.tab)));document.querySelectorAll(".newEntry").forEach(b=>b.addEventListener("click",()=>openEntry(b.dataset.type)));
